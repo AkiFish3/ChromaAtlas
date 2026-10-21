@@ -1,0 +1,14 @@
+// common：平台无关的纯 Java。色表模型 / 最近邻（CIELAB）/ 覆盖优先级，零 MC 依赖。
+plugins {
+	id 'java-library'
+}
+
+description = '平台无关核心：色表模型、最近邻、解析优先级'
+
+// SelfTest 不用 JUnit（靠退出码）⇒ ./gradlew :common:selfTest
+tasks.register('selfTest', JavaExec) {
+	group = 'verification'
+	description = '跑 common 自检 SelfTest'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.akira.chromaatlas.core.SelfTest'
+}

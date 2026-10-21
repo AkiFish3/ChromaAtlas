@@ -39,21 +39,36 @@
 
 `overrides.json` 里的手工值永远优先。
 
-## 构建
+## 分支
 
-各壳独立构建，`core/` 通过 `sourceSets` 共用。
+仓库按 **MC 版本 / 加载器** 分分支，每条分支只放一个工程的代码（不再有 `fabric-1.20.1/` 这种版本目录）。
 
-| 壳 | JDK | Gradle | Loom |
-|---|---|---|---|
-| `fabric-1.20.1` | 17 | 8.3 | 1.3.7 |
-| `fabric-1.21.1` | 21 | 8.14 | 1.10.5 |
+| 分支 | 内容 | JDK | Gradle | Loom |
+|---|---|---|---|---|
+| `1.20.1-fabric`（默认） | 1.20.1 Fabric 单工程 | 17 | 8.3 | 1.3.7 |
+| `1.21.1-fabric/neoforge` | 1.21.1 Fabric + NeoForge 多工程（`common/` `fabric/` `neoforge/`） | 21 | 8.14 | 1.11.458 |
+| `main` | 只读历史（旧的单目录多版本布局，tag `legacy-monorepo`） | — | — | — |
+
+拉自己需要的版本：
 
 ```bash
-cd fabric-1.20.1 && ./gradlew build
-# 产物：build/libs/chromaatlas-<version>.jar
+git clone -b 1.20.1-fabric git@github.com:AkiFish3/ChromaAtlas.git
 ```
 
-JDK 路径别写进仓库，放 `~/.gradle/gradle.properties` 的 `org.gradle.java.home`。
+## 构建
+
+本分支是 **多工程**：`common/`（纯 Java）+ `fabric/` + `neoforge/`。一次构建两个平台的 jar：
+
+```bash
+./gradlew build
+# fabric/build/libs/chromaatlas-0.1.0-1.21.1.jar
+# neoforge/build/libs/chromaatlas-0.1.0-1.21.1-neoforge.jar
+```
+
+只要一个平台：`./gradlew :fabric:build` 或 `./gradlew :neoforge:build`。
+core 自检：`./gradlew :common:selfTest`。
+
+JDK 路径别写进仓库，放 `~/.gradle/gradle.properties` 的 `org.gradle.java.home`（本分支必须 JDK 21+）。
 
 ## 状态
 

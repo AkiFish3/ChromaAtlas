@@ -42,21 +42,39 @@ chosen by mod authors are never overridden.
 
 Values in `overrides.json` always win.
 
-## Building
+## Branches
 
-Each loader shell builds independently; `core/` is shared via `sourceSets`.
+The repo is split by **MC version / loader**; each branch holds exactly one project
+(no more `fabric-1.20.1/` style version folders).
 
-| Shell | JDK | Gradle | Loom |
-|-------|-----|--------|------|
-| `fabric-1.20.1` | 17 | 8.3 | 1.3.7 |
-| `fabric-1.21.1` | 21 | 8.14 | 1.10.5 |
+| Branch | Contents | JDK | Gradle | Loom |
+|--------|----------|-----|--------|------|
+| `1.20.1-fabric` (default) | 1.20.1 Fabric, single project | 17 | 8.3 | 1.3.7 |
+| `1.21.1-fabric/neoforge` | 1.21.1 Fabric + NeoForge multi-project (`common/` `fabric/` `neoforge/`) | 21 | 8.14 | 1.11.458 |
+| `main` | Read-only history (old single-tree, multi-version layout, tag `legacy-monorepo`) | — | — | — |
+
+Clone the version you need:
 
 ```bash
-cd fabric-1.20.1 && ./gradlew build
-# output: build/libs/chromaatlas-<version>.jar
+git clone -b 1.20.1-fabric git@github.com:AkiFish3/ChromaAtlas.git
 ```
 
-Keep the JDK path out of the repo — put `org.gradle.java.home` in `~/.gradle/gradle.properties`.
+## Building
+
+This branch is a **multi-project** build: `common/` (plain Java) + `fabric/` + `neoforge/`.
+One command builds both loaders:
+
+```bash
+./gradlew build
+# fabric/build/libs/chromaatlas-0.1.0-1.21.1.jar
+# neoforge/build/libs/chromaatlas-0.1.0-1.21.1-neoforge.jar
+```
+
+One platform only: `./gradlew :fabric:build` or `./gradlew :neoforge:build`.
+Core self-test: `./gradlew :common:selfTest`.
+
+Keep the JDK path out of the repo — put `org.gradle.java.home` in `~/.gradle/gradle.properties`
+(JDK 21+ is required on this branch).
 
 ## Status
 

@@ -1,24 +1,18 @@
 plugins {
-	id 'fabric-loom' version "${loom_version}"
-	id 'maven-publish'
+	// ★统一用 architectury-loom（不是 fabric-loom）★：同一个 build 里不能同时上两种 loom 实现，
+	// 会在 buildscript classpath 上撞同名类。architectury-loom 的 loom.platform 默认就是 fabric。
+	id 'dev.architectury.loom'
 }
 
-version = project.mod_version
-group = project.maven_group
-
+version = '0.1.0-1.21.1'
 base {
 	archivesName = project.archives_base_name
 }
 
-repositories {
-	// 本工程不引第三方 maven，全部走 Fabric + Central
-}
-
 sourceSets {
 	main {
-		// core 是平台无关的纯 Java，直接并进主 source set，
-		// 这样一份代码被 1.20.1 / 1.21.1 fabric / 1.21.1 neoforge 三个工程共用。
-		java.srcDir '../core/src/main/java'
+		// common 是平台无关的纯 Java，直接并进主 source set（与 1.20.1 分支同口径）
+		java.srcDir '../common/src/main/java'
 	}
 }
 
@@ -55,15 +49,4 @@ processResources {
 				"minecraft_version": project.minecraft_version,
 				"loader_version": project.loader_version
 	}
-}
-
-tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
-	it.options.encoding = "UTF-8"
-}
-
-java {
-	withSourcesJar()
-	sourceCompatibility = JavaVersion.VERSION_17
-	targetCompatibility = JavaVersion.VERSION_17
 }

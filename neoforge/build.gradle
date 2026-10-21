@@ -1,10 +1,10 @@
 plugins {
-	id 'dev.architectury.loom' version '1.11-SNAPSHOT'
-	id 'architectury-plugin' version '3.4-SNAPSHOT'
+	// 版本在根 build.gradle 的 plugins 块统一声明（apply false），这里不重复写
+	id 'dev.architectury.loom'
+	id 'architectury-plugin'
 }
 
-version = project.mod_version
-group = project.maven_group
+version = '0.1.0-1.21.1-neoforge'
 
 base {
 	archivesName = project.archives_base_name
@@ -19,8 +19,8 @@ repositories {
 
 sourceSets {
 	main {
-		// core 与平台无关，直接并进主 source set（三壳共用同一份）
-		java.srcDir '../core/src/main/java'
+		// common 与平台无关，直接并进主 source set
+		java.srcDir '../common/src/main/java'
 	}
 }
 

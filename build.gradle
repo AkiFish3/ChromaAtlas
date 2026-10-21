@@ -1,0 +1,45 @@
+// ChromaAtlas 1.21.1 —— 多工程布局（照 AkiFish3/Redtale 的做法）
+//   common/   平台无关的纯 Java（色表 / 最近邻 / 解析），零 MC 依赖，可单测
+//   fabric/   1.21.1 Fabric 壳
+//   neoforge/ 1.21.1 NeoForge 壳
+// 每个子工程仍把自己的平台入口与 mixin 收在 src/main/java/com/akira/chromaatlas/<平台>/。
+plugins {
+	id 'dev.architectury.loom' version '1.11-SNAPSHOT' apply false
+	id 'architectury-plugin' version '3.4-SNAPSHOT' apply false
+}
+
+allprojects {
+	group = 'com.akira.chromaatlas'
+}
+
+subprojects {
+	apply plugin: 'java'
+
+	// ★仓库按平台分开★：把 maven.neoforged.net 挂到 :fabric 上会让每个 fabric 构件先撞 10s TLS 超时
+	// （实测 :fabric 配置期卡死 11 分钟、daemon CPU 只走 21s ⇒ 全在等网络）。
+	repositories {
+		if (name == 'neoforge') {
+			maven { url = 'https://neoforged.forgecdn.net/releases' }
+			maven { url = 'https://maven.neoforged.net/releases' }
+		}
+		maven { url = 'https://maven.fabricmc.net/' }
+		mavenCentral()
+	}
+
+	// neoforge 子工程必须让 loom 在配置期就看到 loom.platform=neoforge，
+	// 否则 LoomConfigurations 不会建 neoForge 解析配置（症状：net.neoforged.* 整包不存在）。
+	if (name == 'neoforge') {
+		ext['loom.platform'] = 'neoforge'
+	}
+
+	tasks.withType(JavaCompile).configureEach {
+		it.options.release = 21
+		it.options.encoding = 'UTF-8'
+	}
+
+	java {
+		withSourcesJar()
+		sourceCompatibility = JavaVersion.VERSION_21
+		targetCompatibility = JavaVersion.VERSION_21
+	}
+}

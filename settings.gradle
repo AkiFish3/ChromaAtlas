@@ -1,7 +1,7 @@
 pluginManagement {
 	repositories {
 		// ★顺序有意义★ maven.neoforged.net 在本机不稳（HEAD 直接超时），放前面会把整个构建挂住；
-		// 插件本身在 central + architectury 都能拿到，neoforge 构件只需在项目仓库里解析（且已缓存）。
+		// 插件本身在 central + architectury 都能拿到。
 		mavenCentral()
 		maven { url = 'https://maven.fabricmc.net/' }
 		maven { url = 'https://maven.architectury.dev/' }
@@ -12,4 +12,8 @@ pluginManagement {
 	}
 }
 
-rootProject.name = 'chromaatlas-1.21.1-neoforge'
+rootProject.name = 'chromaatlas-1.21.1'
+
+include 'common'
+include 'fabric'
+include 'neoforge'
