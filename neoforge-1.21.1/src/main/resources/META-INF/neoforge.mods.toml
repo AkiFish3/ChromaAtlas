@@ -5,9 +5,9 @@ license = "LGPL-3.0-only"
 [[mods]]
 modId = "chromaatlas"
 version = "${version}"
-displayName = "ChromaAtlas"
+displayName = "ChromaAtlas（色彩图集）"
 authors = "Aki"
-description = '''给没设 mapColor 的模组方块自动补地图颜色。不改外观、不改存档、不分发贴图。'''
+description = '''色彩图集：给没设 mapColor 的模组方块自动补上地图颜色。不改外观、不改存档、不分发贴图。'''
 
 [[dependencies.chromaatlas]]
 modId = "neoforge"

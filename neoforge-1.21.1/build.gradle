@@ -1,0 +1,73 @@
+plugins {
+	id 'dev.architectury.loom' version '1.11-SNAPSHOT'
+	id 'architectury-plugin' version '3.4-SNAPSHOT'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+	archivesName = project.archives_base_name
+}
+
+repositories {
+	maven { url = 'https://maven.neoforged.net/releases' }
+	mavenCentral()
+}
+
+sourceSets {
+	main {
+		// core 与平台无关，直接并进主 source set（三壳共用同一份）
+		java.srcDir '../core/src/main/java'
+	}
+}
+
+architectury {
+	minecraft = project.minecraft_version
+	platformSetupLoomIde()
+	neoForge()
+}
+
+loom {
+	silentMojangMappingsLicense()
+	mixin {
+		defaultRefmapName = 'chromaatlas.refmap.json'
+	}
+	runs {
+		server {
+			name "ChromaAtlas Server"
+			server()
+			runDir "run/server"
+		}
+		client {
+			name "ChromaAtlas Client"
+			client()
+			runDir "run/client"
+		}
+	}
+}
+
+dependencies {
+	minecraft "net.minecraft:minecraft:${project.minecraft_version}"
+	mappings loom.officialMojangMappings()
+	neoForge "net.neoforged:neoforge:${project.neoforge_version}"
+}
+
+processResources {
+	inputs.property "version", project.version
+	filteringCharset "UTF-8"
+	filesMatching("META-INF/neoforge.mods.toml") {
+		expand "version": project.version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 21
+	it.options.encoding = "UTF-8"
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}

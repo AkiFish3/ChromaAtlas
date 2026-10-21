@@ -1,7 +1,7 @@
 {
 	"required": true,
 	"minVersion": "0.8",
-	"package": "com.akira.chromaatlas.fabric.mixin",
+	"package": "com.akira.chromaatlas.neoforge.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
 		"BlockStateBaseMixin"
