@@ -11,7 +11,7 @@
 |------|------|
 | Mod ID | `chromaatlas` |
 | MC 版本 | 1.20.1 / 1.21.1 |
-| 平台 | Fabric（NeoForge 在研） |
+| 平台 | Fabric / NeoForge |
 | 依赖 | Fabric API |
 | 协议 | LGPL-3.0 |
 
@@ -39,21 +39,31 @@
 
 `overrides.json` 里的手工值永远优先。
 
-## 构建
+## 分支
 
-各壳独立构建，`core/` 通过 `sourceSets` 共用。
+仓库按 **MC 版本 / 加载器** 分分支，每条分支只放一个工程的代码（不再有 `fabric-1.20.1/` 这种版本目录）。
 
-| 壳 | JDK | Gradle | Loom |
-|---|---|---|---|
-| `fabric-1.20.1` | 17 | 8.3 | 1.3.7 |
-| `fabric-1.21.1` | 21 | 8.14 | 1.10.5 |
+| 分支 | 内容 | JDK | Gradle | Loom |
+|---|---|---|---|---|
+| `1.20.1-fabric`（默认） | 1.20.1 Fabric 单工程 | 17 | 8.3 | 1.3.7 |
+| `1.21.1-fabric/neoforge` | 1.21.1 Fabric + NeoForge 多工程（`common/` `fabric/` `neoforge/`） | 21 | 8.14 | 1.10.5 / 1.11.458 |
+| `main` | 只读历史（旧的单目录多版本布局，tag `legacy-monorepo`） | — | — | — |
+
+拉自己需要的版本：
 
 ```bash
-cd fabric-1.20.1 && ./gradlew build
+git clone -b 1.20.1-fabric git@github.com:AkiFish3/ChromaAtlas.git
+```
+
+## 构建
+
+```bash
+./gradlew build
 # 产物：build/libs/chromaatlas-<version>.jar
 ```
 
 JDK 路径别写进仓库，放 `~/.gradle/gradle.properties` 的 `org.gradle.java.home`。
+core 自检：`./gradlew selfTest`。
 
 ## 状态
 
@@ -62,7 +72,7 @@ JDK 路径别写进仓库，放 `~/.gradle/gradle.properties` 的 `org.gradle.ja
 | 1.20.1 Fabric | ✅ 全量 29851 方块：`NONE` 4662（15.6%）→ 补 4586（98.4%），`verify 200/200` |
 | 地图重绘 | ✅ 与原版逐字节一致 100.00%（16117/16117） |
 | 1.21.1 Fabric | ✅ 构建绿，服务端 + 客户端 `verify 122/122`、0 异常 |
-| 1.21.1 NeoForge | 🚧 在研 |
+| 1.21.1 NeoForge | ✅ 构建绿，dev 服务端 `verify 122/122`、0 异常 |
 
 ## 边界
 

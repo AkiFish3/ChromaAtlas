@@ -14,13 +14,9 @@ repositories {
 	// 本工程不引第三方 maven，全部走 Fabric + Central
 }
 
-sourceSets {
-	main {
-		// core 是平台无关的纯 Java，直接并进主 source set，
-		// 这样一份代码被 1.20.1 / 1.21.1 fabric / 1.21.1 neoforge 三个工程共用。
-		java.srcDir '../core/src/main/java'
-	}
-}
+// 本分支是单工程（照 RedtaleEconomy 的 1.20.1-fabric 布局）：
+// core（平台无关纯 Java）已在 src/main/java/com/akira/chromaatlas/core/，
+// 不再通过跨工程的 java.srcDir 引外部目录。
 
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -66,4 +62,12 @@ java {
 	withSourcesJar()
 	sourceCompatibility = JavaVersion.VERSION_17
 	targetCompatibility = JavaVersion.VERSION_17
+}
+
+// core 自检（不用 JUnit，靠退出码）⇒ ./gradlew selfTest
+tasks.register('selfTest', JavaExec) {
+	group = 'verification'
+	description = '跑 core 自检 SelfTest'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.akira.chromaatlas.core.SelfTest'
 }

@@ -13,7 +13,7 @@ Plenty of decoration mods build blocks with `Properties.of()` without `.mapColor
 |------|-------|
 | Mod ID | `chromaatlas` |
 | MC version | 1.20.1 / 1.21.1 |
-| Platform | Fabric (NeoForge in progress) |
+| Platform | Fabric / NeoForge |
 | Requires | Fabric API |
 | License | LGPL-3.0 |
 
@@ -42,21 +42,32 @@ chosen by mod authors are never overridden.
 
 Values in `overrides.json` always win.
 
-## Building
+## Branches
 
-Each loader shell builds independently; `core/` is shared via `sourceSets`.
+The repo is split by **MC version / loader**; each branch holds exactly one project
+(no more `fabric-1.20.1/` style version folders).
 
-| Shell | JDK | Gradle | Loom |
-|-------|-----|--------|------|
-| `fabric-1.20.1` | 17 | 8.3 | 1.3.7 |
-| `fabric-1.21.1` | 21 | 8.14 | 1.10.5 |
+| Branch | Contents | JDK | Gradle | Loom |
+|--------|----------|-----|--------|------|
+| `1.20.1-fabric` (default) | 1.20.1 Fabric, single project | 17 | 8.3 | 1.3.7 |
+| `1.21.1-fabric/neoforge` | 1.21.1 Fabric + NeoForge multi-project (`common/` `fabric/` `neoforge/`) | 21 | 8.14 | 1.10.5 / 1.11.458 |
+| `main` | Read-only history (old single-tree, multi-version layout, tag `legacy-monorepo`) | — | — | — |
+
+Clone the version you need:
 
 ```bash
-cd fabric-1.20.1 && ./gradlew build
+git clone -b 1.20.1-fabric git@github.com:AkiFish3/ChromaAtlas.git
+```
+
+## Building
+
+```bash
+./gradlew build
 # output: build/libs/chromaatlas-<version>.jar
 ```
 
 Keep the JDK path out of the repo — put `org.gradle.java.home` in `~/.gradle/gradle.properties`.
+Core self-test: `./gradlew selfTest`.
 
 ## Status
 
@@ -65,7 +76,7 @@ Keep the JDK path out of the repo — put `org.gradle.java.home` in `~/.gradle/g
 | 1.20.1 Fabric | ✅ 29851 blocks: `NONE` 4662 (15.6%) → 4586 filled (98.4%), `verify 200/200` |
 | Map repaint | ✅ 100.00% byte-identical to vanilla (16117/16117) |
 | 1.21.1 Fabric | ✅ build green, `verify 122/122` on server and client, 0 exceptions |
-| 1.21.1 NeoForge | 🚧 in progress |
+| 1.21.1 NeoForge | ✅ build green, `verify 122/122` on dev server, 0 exceptions |
 
 ## Limits
 
