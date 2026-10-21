@@ -1,0 +1,22 @@
+# Gradle / Loom
+build/
+.gradle/
+run/
+out/
+
+# IDE
+*.iml
+.idea/
+.vscode/
+*.ipr
+*.iws
+
+# 本地备份与临时产物（不进仓库）
+_backup/
+*.bak_*
+*.log
+*.hprof
+
+# 系统
+.DS_Store
+Thumbs.db

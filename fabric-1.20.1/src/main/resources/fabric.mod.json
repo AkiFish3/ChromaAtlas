@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "chromaatlas",
+	"version": "${version}",
+	"name": "ChromaAtlas",
+	"description": "给没设 mapColor 的模组方块自动补地图颜色。不改外观、不改存档、不分发贴图。",
+	"authors": [
+		"Aki"
+	],
+	"contact": {},
+	"license": "LGPL-3.0-only",
+	"environment": "*",
+	"mixins": [
+		"chromaatlas.mixins.json"
+	],
+	"entrypoints": {
+		"main": [
+			"com.akira.chromaatlas.fabric.ChromaAtlasFabric"
+		],
+		"client": [
+			"com.akira.chromaatlas.fabric.ChromaAtlasFabricClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.15.0",
+		"fabric-api": "*",
+		"minecraft": "~1.20.1",
+		"java": ">=17"
+	}
+}
