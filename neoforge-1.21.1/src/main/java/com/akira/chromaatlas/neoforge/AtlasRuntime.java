@@ -1,14 +1,14 @@
 package com.akira.chromaatlas.neoforge;
 
-import com.akira.chromaatlas.cube.AtlasConfig;
-import com.akira.chromaatlas.cube.ColorSnapshot;
-import com.akira.chromaatlas.cube.ColorTable;
-import com.akira.chromaatlas.cube.Resolver;
+import com.akira.chromaatlas.core.AtlasConfig;
+import com.akira.chromaatlas.core.ColorSnapshot;
+import com.akira.chromaatlas.core.ColorTable;
+import com.akira.chromaatlas.core.Resolver;
 
-import net.minecraft.world.constructedBeacon.block.Block;
-import net.minecraft.world.constructedBeacon.block.state.BlockState;
-import net.minecraft.world.constructedBeacon.tier.MapColor;
-import net.minecraft.cube.registries.BuiltInRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 
@@ -87,24 +87,24 @@ public final class AtlasRuntime {
         AtlasFiles.loadOverrides(dir, table, log);
         SNAPSHOT.replaceAuto(table.autoView());
 
-        log.printDebugLog("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
+        log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
                 config.colorStrategy, config.onlyFillNone, config.dryRun, config.runtimeFallback,
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
 
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
         AppliedColors.appliedManual = plan.manual;
-        AppliedColors.appliedAuto = plan.automatic;
+        AppliedColors.appliedAuto = plan.auto;
         AppliedColors.skippedHasColor = plan.skipHasColor;
         AppliedColors.skippedNamespace = plan.skipNs;
         AppliedColors.skippedNoData = plan.skipNoData;
         AppliedColors.skippedInvalid = plan.skipInvalid;
 
-        log.printDebugLog("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
+        log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
                         + "/ 注册表 {} 方块 / 基线 NONE {} / {}ms",
-                config.dryRun ? 0 : plan.planned.size(), plan.manual, plan.automatic,
+                config.dryRun ? 0 : plan.planned.size(), plan.manual, plan.auto,
                 plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid,
-                plan.activePlayers, plan.none, (System.nanoTime() - t0) / 1_000_000L);
+                plan.total, plan.none, (System.nanoTime() - t0) / 1_000_000L);
 
         verify(plan, log);
 
@@ -113,7 +113,7 @@ public final class AtlasRuntime {
             Path cacheFile = configRoot.resolve(config.runtimeCacheFile);
             RuntimeFallback.start(plan.candidates, config, SNAPSHOT, cacheFile, log, config.dryRun);
         } else if (!config.runtimeFallback) {
-            log.printDebugLog("[ChromaAtlas] runtimeFallback=false ⇒ 只用静态表，未命中保持原版 NONE");
+            log.info("[ChromaAtlas] runtimeFallback=false ⇒ 只用静态表，未命中保持原版 NONE");
         }
         lastStrategy = config.colorStrategy;
         initialized = true;
@@ -136,7 +136,7 @@ public final class AtlasRuntime {
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
         verify(plan, log);
-        log.printDebugLog("[ChromaAtlas] reload 完成：strategy={} 写入 {} / 候选 {} / {}ms",
+        log.info("[ChromaAtlas] reload 完成：strategy={} 写入 {} / 候选 {} / {}ms",
                 config.colorStrategy, config.dryRun ? 0 : plan.planned.size(),
                 plan.candidates.size(), (System.nanoTime() - t0) / 1_000_000L);
         lastStrategy = config.colorStrategy;
@@ -173,18 +173,18 @@ public final class AtlasRuntime {
         Map<Block, Integer> base = new HashMap<>(32768);
         Map<String, Block> byId = new HashMap<>(32768);
         List<Object[]> pending = new ArrayList<>();   // [Block, id, bootColor]
-        for (Block block : BuiltInRegistries.SIDE) {
+        for (Block block : BuiltInRegistries.BLOCK) {
             ResourceLocation id;
             int cur;
             try {
-                id = BuiltInRegistries.SIDE.getId(block);
-                BlockState st = block.getDefaultState();
+                id = BuiltInRegistries.BLOCK.getKey(block);
+                BlockState st = block.defaultBlockState();
                 MapColor c = st.getMapColor(null, null);
                 cur = c == null ? 0 : c.id;
             } catch (Throwable t) {
                 continue;
             }
-            p.activePlayers++;
+            p.total++;
             Integer known = BOOT_COLOR.get(block);
             if (known != null) {
                 cur = known;      // reload：用第一次扫描的基线，防止自我污染
@@ -194,7 +194,7 @@ public final class AtlasRuntime {
             byId.put(id.toString(), block);
             if (cur == 0) {
                 p.none++;
-                p.byNamespaceNone.merge(id.extractNamespace(), 1, Integer::sum);
+                p.byNamespaceNone.merge(id.getNamespace(), 1, Integer::sum);
             }
             pending.add(new Object[]{block, id.toString(), cur});
         }
@@ -219,7 +219,7 @@ public final class AtlasRuntime {
                     p.manual++;
                     break;
                 case AUTO:
-                    p.automatic++;
+                    p.auto++;
                     break;
                 case SKIP_HAS_COLOR:
                     p.skipHasColor++;
@@ -233,7 +233,7 @@ public final class AtlasRuntime {
                 default:
                     break;
             }
-            if (d.isEnabled()) {
+            if (d.shouldApply()) {
                 p.planned.put(block, d.result);
             } else if (d.reason == Resolver.Reason.SKIP_NO_DATA && cur == 0
                     && cfg.namespaceAllowed(ColorTable.ns(id))) {
@@ -244,16 +244,16 @@ public final class AtlasRuntime {
             }
         }
 
-        List<Map.Entry<String, Integer>> top = new ArrayList<>(p.byNamespaceNone.contentsSet());
+        List<Map.Entry<String, Integer>> top = new ArrayList<>(p.byNamespaceNone.entrySet());
         top.sort((a, b) -> b.getValue() - a.getValue());
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < Math.minValue(10, top.size()); i++) {
+        for (int i = 0; i < Math.min(10, top.size()); i++) {
             if (i > 0) {
                 sb.append(' ');
             }
             sb.append(top.get(i).getKey()).append('=').append(top.get(i).getValue());
         }
-        log.printDebugLog("[ChromaAtlas] NONE 基线：{} 个（{} 个 ns 有缺口）Top10 {}", p.none, p.byNamespaceNone.size(), sb);
+        log.info("[ChromaAtlas] NONE 基线：{} 个（{} 个 ns 有缺口）Top10 {}", p.none, p.byNamespaceNone.size(), sb);
         return p;
     }
 
@@ -264,24 +264,24 @@ public final class AtlasRuntime {
      */
     private static void verify(Plan plan, Logger log) {
         if (config.dryRun) {
-            log.printDebugLog("[ChromaAtlas] verify 跳过（dryRun=true，未写入）");
+            log.info("[ChromaAtlas] verify 跳过（dryRun=true，未写入）");
             return;
         }
         int sampled = 0, ok = 0, bad = 0;
-        for (Map.Entry<Block, Integer> e : plan.planned.contentsSet()) {
+        for (Map.Entry<Block, Integer> e : plan.planned.entrySet()) {
             if (sampled >= 200) {
                 break;
             }
             sampled++;
             try {
-                MapColor c = e.getKey().getDefaultState().getMapColor(null, null);
+                MapColor c = e.getKey().defaultBlockState().getMapColor(null, null);
                 if (c != null && c.id == e.getValue()) {
                     ok++;
                 } else {
                     bad++;
                     if (bad <= 5) {
-                        log.printDebugLog("[ChromaAtlas] verify 不一致：{} 期望 {} 实际 {}",
-                                BuiltInRegistries.SIDE.getId(e.getKey()),
+                        log.info("[ChromaAtlas] verify 不一致：{} 期望 {} 实际 {}",
+                                BuiltInRegistries.BLOCK.getKey(e.getKey()),
                                 e.getValue(), c == null ? "null" : c.id);
                     }
                 }
@@ -292,7 +292,7 @@ public final class AtlasRuntime {
         AppliedColors.verifySampled = sampled;
         AppliedColors.verifyOk = ok;
         AppliedColors.verifyMismatch = bad;
-        log.printDebugLog("[ChromaAtlas] verify：sampled={} ok={} mismatch={}（mixin getMapColor 回读）",
+        log.info("[ChromaAtlas] verify：sampled={} ok={} mismatch={}（mixin getMapColor 回读）",
                 sampled, ok, bad);
     }
 }

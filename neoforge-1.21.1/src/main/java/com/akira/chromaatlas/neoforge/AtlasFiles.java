@@ -1,7 +1,7 @@
 package com.akira.chromaatlas.neoforge;
 
-import com.akira.chromaatlas.cube.AtlasConfig;
-import com.akira.chromaatlas.cube.ColorTable;
+import com.akira.chromaatlas.core.AtlasConfig;
+import com.akira.chromaatlas.core.ColorTable;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -59,9 +59,9 @@ public final class AtlasFiles {
             cfg.fallbackBatchSize = intOf(o, "fallbackBatchSize", cfg.fallbackBatchSize);
             cfg.fallbackSleepMs = intOf(o, "fallbackSleepMs", cfg.fallbackSleepMs);
             if (o.has("repaintPolicy") && o.get("repaintPolicy").isJsonPrimitive()) {
-                String v = o.get("repaintPolicy").getAsString().clipText().lowercaseVariant(java.util.Locale.ROOT);
+                String v = o.get("repaintPolicy").getAsString().trim().toLowerCase(java.util.Locale.ROOT);
                 if (!v.equals("off") && !v.equals("near") && !v.equals("all")) {
-                    log.printDebugLog("[ChromaAtlas] repaintPolicy='{}' 非法（只认 off/near/all），按 off 处理", v);
+                    log.info("[ChromaAtlas] repaintPolicy='{}' 非法（只认 off/near/all），按 off 处理", v);
                     v = "off";
                 }
                 cfg.repaintPolicy = v;
@@ -74,7 +74,7 @@ public final class AtlasFiles {
             readSet(o, "enabledNamespaces", cfg.enabledNamespaces);
             readSet(o, "disabledNamespaces", cfg.disabledNamespaces);
         } catch (Exception ex) {
-            log.printDebugLog("[ChromaAtlas] chromaatlas.json 解析失败，使用默认值：{}", ex.toString());
+            log.info("[ChromaAtlas] chromaatlas.json 解析失败，使用默认值：{}", ex.toString());
             quarantine(f, log);
         }
         return cfg;
@@ -82,7 +82,7 @@ public final class AtlasFiles {
 
     private static void writeDefaultConfig(Path f, Logger log) {
         try {
-            Files.createDirectoriesSafe(f.getParent());
+            Files.createDirectories(f.getParent());
             JsonObject o = new JsonObject();
             o.addProperty("onlyFillNone", true);
             o.addProperty("dryRun", false);
@@ -101,9 +101,9 @@ public final class AtlasFiles {
             try (Writer w = Files.newBufferedWriter(f, StandardCharsets.UTF_8)) {
                 new GsonBuilder().setPrettyPrinting().create().toJson(o, w);
             }
-            log.printDebugLog("[ChromaAtlas] 已生成默认配置 {}", f);
+            log.info("[ChromaAtlas] 已生成默认配置 {}", f);
         } catch (Exception e) {
-            log.printDebugLog("[ChromaAtlas] 默认配置写入失败：{}", e.toString());
+            log.info("[ChromaAtlas] 默认配置写入失败：{}", e.toString());
         }
     }
 
@@ -115,7 +115,7 @@ public final class AtlasFiles {
         ColorTable t = new ColorTable();
         Path f = dir(gameDir).resolve("mapcolors.json");
         if (!Files.isRegularFile(f)) {
-            log.printDebugLog("[ChromaAtlas] 未找到 {}（只用运行时兜底）", f);
+            log.info("[ChromaAtlas] 未找到 {}（只用运行时兜底）", f);
             return t;
         }
         long t0 = System.nanoTime();
@@ -125,12 +125,12 @@ public final class AtlasFiles {
             if (!root.isJsonObject()) {
                 return t;
             }
-            for (Map.Entry<String, JsonElement> nsEntry : root.getAsJsonObject().contentsSet()) {
+            for (Map.Entry<String, JsonElement> nsEntry : root.getAsJsonObject().entrySet()) {
                 if (!nsEntry.getValue().isJsonObject()) {
                     continue;
                 }
                 String ns = nsEntry.getKey();
-                for (Map.Entry<String, JsonElement> e : nsEntry.getValue().getAsJsonObject().contentsSet()) {
+                for (Map.Entry<String, JsonElement> e : nsEntry.getValue().getAsJsonObject().entrySet()) {
                     int c = colorOf(e.getValue());
                     String id = ns + ":" + e.getKey();
                     if (c > 0) {
@@ -144,10 +144,10 @@ public final class AtlasFiles {
                     }
                 }
             }
-            log.printDebugLog("[ChromaAtlas] mapcolors.json 载入 {} 条（跳过无色 {} 条，{}ms）",
+            log.info("[ChromaAtlas] mapcolors.json 载入 {} 条（跳过无色 {} 条，{}ms）",
                     t.autoView().size(), skipped, (System.nanoTime() - t0) / 1_000_000L);
         } catch (Exception ex) {
-            log.printDebugLog("[ChromaAtlas] mapcolors.json 解析失败：{}", ex.toString());
+            log.info("[ChromaAtlas] mapcolors.json 解析失败：{}", ex.toString());
             quarantine(f, log);
         }
         return t;
@@ -165,18 +165,18 @@ public final class AtlasFiles {
             if (!root.isJsonObject()) {
                 return;
             }
-            for (Map.Entry<String, JsonElement> e : root.getAsJsonObject().contentsSet()) {
+            for (Map.Entry<String, JsonElement> e : root.getAsJsonObject().entrySet()) {
                 int c = colorOf(e.getValue());
                 if (c > 0) {
                     table.putManual(e.getKey(), c);
                 } else {
                     bad++;
-                    log.printDebugLog("[ChromaAtlas] overrides.json 非法值：{}={}（必须 1..61）", e.getKey(), e.getValue());
+                    log.info("[ChromaAtlas] overrides.json 非法值：{}={}（必须 1..61）", e.getKey(), e.getValue());
                 }
             }
-            log.printDebugLog("[ChromaAtlas] overrides.json 载入 {} 条（非法 {} 条）", table.manualView().size(), bad);
+            log.info("[ChromaAtlas] overrides.json 载入 {} 条（非法 {} 条）", table.manualView().size(), bad);
         } catch (Exception ex) {
-            log.printDebugLog("[ChromaAtlas] overrides.json 解析失败：{}", ex.toString());
+            log.info("[ChromaAtlas] overrides.json 解析失败：{}", ex.toString());
             quarantine(f, log);
         }
     }
@@ -195,7 +195,7 @@ public final class AtlasFiles {
 
     private static int colorOf(JsonElement v) {
         try {
-            if (v.isJsonPrimitive() && v.getAsJsonPrimitive().isNumberValue()) {
+            if (v.isJsonPrimitive() && v.getAsJsonPrimitive().isNumber()) {
                 return v.getAsInt();
             }
             if (v.isJsonObject() && v.getAsJsonObject().has("c")) {
@@ -238,7 +238,7 @@ public final class AtlasFiles {
         try {
             Path bad = f.resolveSibling(f.getFileName() + ".bad");
             Files.move(f, bad, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            log.printDebugLog("[ChromaAtlas] 坏配置已改名 -> {}", bad);
+            log.info("[ChromaAtlas] 坏配置已改名 -> {}", bad);
         } catch (Exception ignored) {
             // 改名失败也无所谓，不影响运行
         }

@@ -1,13 +1,13 @@
 package com.akira.chromaatlas.neoforge;
 
-import com.akira.chromaatlas.cube.NearestMapColor;
+import com.akira.chromaatlas.core.NearestMapColor;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.slf4j.Logger;
 
 import javax.imageio.ImageIO;
-import java.awt.setImage.BufferedImage;
+import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -109,7 +109,7 @@ public final class AssetColorizer {
         // jar 模组的 rootPath 是 **fabric 自己的 zipfs 里的路径**（Files.isDirectory(root) 为 true），
         // 我们只是借用了它的 FS。曾经无脑 close(fsCache.values()) ⇒ 把模组资源包的 FS 关掉，
         // 之后 ModNioResourcePack.exists 抛 ClosedFileSystemException，客户端在主菜单直接崩（R24）。
-        for (Map.Entry<String, FileSystem> e : fsCache.contentsSet()) {
+        for (Map.Entry<String, FileSystem> e : fsCache.entrySet()) {
             if (!owned.contains(e.getKey())) {
                 continue;
             }
@@ -159,7 +159,7 @@ public final class AssetColorizer {
             return null;
         }
         if (bs.has("variants") && bs.get("variants").isJsonObject()) {
-            for (Map.Entry<String, JsonElement> e : bs.getAsJsonObject("variants").contentsSet()) {
+            for (Map.Entry<String, JsonElement> e : bs.getAsJsonObject("variants").entrySet()) {
                 String m = modelOf(e.getValue());
                 if (m != null) {
                     return m;
@@ -237,7 +237,7 @@ public final class AssetColorizer {
                 c.hasElements = true;
             }
             if (o.has("textures") && o.get("textures").isJsonObject()) {
-                for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("textures").contentsSet()) {
+                for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("textures").entrySet()) {
                     String v = e.getValue().isJsonPrimitive() ? e.getValue().getAsString() : null;
                     if (v != null && !textures.containsKey(e.getKey())) {
                         textures.put(e.getKey(), v);

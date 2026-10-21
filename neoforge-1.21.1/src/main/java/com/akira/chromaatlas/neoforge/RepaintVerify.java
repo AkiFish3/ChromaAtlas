@@ -1,11 +1,11 @@
 package com.akira.chromaatlas.neoforge;
 
-import net.minecraft.world.items.MapItem;
-import net.minecraft.world.items.Items;
-import net.minecraft.world.constructedBeacon.saveddata.maps.MapItemSavedData;
+import net.minecraft.world.item.MapItem;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.constructedBeacon.ServerPlayer;
-import net.minecraft.server.constructedBeacon.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 
 import java.nio.file.Files;
@@ -52,10 +52,10 @@ public final class RepaintVerify {
         delay = 100;
         ServerPlayer player = null;
         ServerLevel world = null;
-        for (ServerLevel w : server.getWorlds()) {
-            if (!w.getPlayers().isEmpty()) {
+        for (ServerLevel w : server.getAllLevels()) {
+            if (!w.players().isEmpty()) {
                 world = w;
-                player = w.getPlayers().get(0);
+                player = w.players().get(0);
                 break;
             }
         }
@@ -64,10 +64,10 @@ public final class RepaintVerify {
         }
         done = true;
         try {
-            run(world, player, ChromaAtlasFabric.LOG);
+            run(world, player, ChromaAtlasNeoForge.LOG);
         } catch (Throwable t) {
-            ChromaAtlasFabric.LOG.printDebugLog("[ChromaAtlas/repaintverify] ERROR {}", t.toString());
-            ChromaAtlasFabric.LOG.logAndPauseIfInIde("[ChromaAtlas] repaintverify failed", t);
+            ChromaAtlasNeoForge.LOG.info("[ChromaAtlas/repaintverify] ERROR {}", t.toString());
+            ChromaAtlasNeoForge.LOG.error("[ChromaAtlas] repaintverify failed", t);
         }
     }
 
@@ -76,17 +76,17 @@ public final class RepaintVerify {
         near(world, player, log);
         far(world, log);
         long ms = (System.nanoTime() - t0) / 1_000_000L;
-        log.printDebugLog("[ChromaAtlas/repaintverify] TOTAL ms={} dim={} player={},{}",
-                ms, world.getRegistryKey().getValue(), (int) player.getX(), (int) player.getZ());
-        log.printDebugLog("[ChromaAtlas/repaintverify] DONE");
+        log.info("[ChromaAtlas/repaintverify] TOTAL ms={} dim={} player={},{}",
+                ms, world.dimension().location(), (int) player.getX(), (int) player.getZ());
+        log.info("[ChromaAtlas/repaintverify] DONE");
     }
 
     private static final int N = MapRepaint.SIZE * MapRepaint.SIZE;
 
     private static void near(ServerLevel world, ServerPlayer player, Logger log) {
-        MapItemSavedData map = MapItemSavedData.of(player.getX(), player.getZ(), (byte) 0, true, false,
-                world.getRegistryKey());
-        byte[] before = map.mapColors.replaceWith();
+        MapItemSavedData map = MapItemSavedData.createFresh(player.getX(), player.getZ(), (byte) 0, true, false,
+                world.dimension());
+        byte[] before = map.colors.clone();
 
         long t0 = System.nanoTime();
         int written = 0;
@@ -107,13 +107,13 @@ public final class RepaintVerify {
                 }
             }
         }
-        byte[] ours = map.mapColors.replaceWith();
+        byte[] ours = map.colors.clone();
         long oursNs = System.nanoTime() - t0;
-        log.printDebugLog("[ChromaAtlas/repaintverify] NEAR ours_written={} unloaded={} empty={} ms={}",
+        log.info("[ChromaAtlas/repaintverify] NEAR ours_written={} unloaded={} empty={} ms={}",
                 written, unloaded, empty, oursNs / 1_000_000L);
 
         // 还原后交给 vanilla
-        System.arraycopy(before, 0, map.mapColors, 0, before.length);
+        System.arraycopy(before, 0, map.colors, 0, before.length);
         long t1 = System.nanoTime();
         String err = "none";
         try {
@@ -122,7 +122,7 @@ public final class RepaintVerify {
             err = t.toString();
         }
         long vanNs = System.nanoTime() - t1;
-        byte[] van = map.mapColors.replaceWith();
+        byte[] van = map.colors.clone();
         int cmp = 0;
         int eq = 0;
         for (int i = 0; i < N; i++) {
@@ -134,16 +134,16 @@ public final class RepaintVerify {
             }
         }
         double pct = cmp == 0 ? -1.0 : 100.0 * eq / cmp;
-        log.printDebugLog("[ChromaAtlas/repaintverify] NEAR vanilla_written={} ms={} err={}", cmp, vanNs / 1_000_000L, err);
-        log.printDebugLog("[ChromaAtlas/repaintverify] NEAR MATCH cmp={} eq={} pct={}",
+        log.info("[ChromaAtlas/repaintverify] NEAR vanilla_written={} ms={} err={}", cmp, vanNs / 1_000_000L, err);
+        log.info("[ChromaAtlas/repaintverify] NEAR MATCH cmp={} eq={} pct={}",
                 cmp, eq, String.format("%.2f", pct));
-        log.printDebugLog("[ChromaAtlas/repaintverify] NEAR US_PER_PIXEL={}",
+        log.info("[ChromaAtlas/repaintverify] NEAR US_PER_PIXEL={}",
                 String.format("%.3f", oursNs / 1000.0 / N));
     }
 
     /** 全部未加载的区域：必须一个字节都不改（铁律 1）。 */
     private static void far(ServerLevel world, Logger log) {
-        MapItemSavedData map = MapItemSavedData.of(20000.0, 20000.0, (byte) 0, true, false, world.getRegistryKey());
+        MapItemSavedData map = MapItemSavedData.createFresh(20000.0, 20000.0, (byte) 0, true, false, world.dimension());
         MapRepaint.Painter painter = new MapRepaint.Painter(world, map);
         int written = 0;
         int unloaded = 0;
@@ -160,12 +160,12 @@ public final class RepaintVerify {
             }
         }
         int nonZero = 0;
-        for (byte b : map.mapColors) {
+        for (byte b : map.colors) {
             if (b != 0) {
                 nonZero++;
             }
         }
-        log.printDebugLog("[ChromaAtlas/repaintverify] FAR unloaded={} written={} nonzero={} ok={}",
+        log.info("[ChromaAtlas/repaintverify] FAR unloaded={} written={} nonzero={} ok={}",
                 unloaded, written, nonZero, (written == 0 && nonZero == 0) ? "yes" : "no");
     }
 }

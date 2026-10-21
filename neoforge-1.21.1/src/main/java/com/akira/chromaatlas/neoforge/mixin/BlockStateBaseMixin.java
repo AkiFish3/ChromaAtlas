@@ -1,15 +1,15 @@
 package com.akira.chromaatlas.neoforge.mixin;
 
 import com.akira.chromaatlas.neoforge.AppliedColors;
-import net.minecraft.world.constructedBeacon.block.state.BlockBehaviour;
-import net.minecraft.world.constructedBeacon.block.state.BlockState;
-import net.minecraft.world.constructedBeacon.tier.MapColor;
-import net.minecraft.cube.BlockPos;
-import net.minecraft.world.constructedBeacon.BlockGetter;
+import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.BlockGetter;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.onValueChange.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * 唯一应用点：{@code AbstractBlock$AbstractBlockState#getMapColor(BlockView, BlockPos)}。
@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.onValueChange.CallbackInfoReturnabl
  * {@code catch (Throwable) { buggedStates.add(state); LOGGER.info(...) }}：
  * 我们一抛，该 BlockState 就被永久标记为 bugged 并刷日志（R13）。
  */
-@Mixin(BlockBehaviour.AbstractBlockState.class)
+@Mixin(BlockBehaviour.BlockStateBase.class)
 public abstract class BlockStateBaseMixin {
 
     @Inject(method = "getMapColor", at = @At("HEAD"), cancellable = true)

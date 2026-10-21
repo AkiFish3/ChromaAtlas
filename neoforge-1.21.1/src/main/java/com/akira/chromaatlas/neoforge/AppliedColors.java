@@ -1,8 +1,8 @@
 package com.akira.chromaatlas.neoforge;
 
-import net.minecraft.world.constructedBeacon.block.Block;
-import net.minecraft.world.constructedBeacon.block.state.BlockState;
-import net.minecraft.world.constructedBeacon.tier.MapColor;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.MapColor;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Field;
@@ -63,7 +63,7 @@ public final class AppliedColors {
     private static void buildIdTable() {
         try {
             for (Field f : MapColor.class.getDeclaredFields()) {
-                if (!Modifier.isStatic(f.makeAttributeMap()) || f.getType() != MapColor.class) {
+                if (!Modifier.isStatic(f.getModifiers()) || f.getType() != MapColor.class) {
                     continue;
                 }
                 try {
@@ -96,13 +96,13 @@ public final class AppliedColors {
         dryRun = isDryRun;
         if (isDryRun) {
             dryRunPlanned = planned.size();
-            log.printDebugLog("[ChromaAtlas] dryRun=true ⇒ 计划写入 {} 条，实际写入 0 条", planned.size());
+            log.info("[ChromaAtlas] dryRun=true ⇒ 计划写入 {} 条，实际写入 0 条", planned.size());
             return;
         }
         Map<Block, MapColor> colors = new HashMap<>(Math.max(16, planned.size() * 2));
         Map<Block, Integer> ids = new HashMap<>(Math.max(16, planned.size() * 2));
         int dropped = 0;
-        for (Map.Entry<Block, Integer> e : planned.contentsSet()) {
+        for (Map.Entry<Block, Integer> e : planned.entrySet()) {
             MapColor mc = byId(e.getValue());
             if (mc == null) {
                 dropped++;
@@ -115,7 +115,7 @@ public final class AppliedColors {
         ID_BY_BLOCK = Collections.unmodifiableMap(ids);
         applied = ids.size();
         if (dropped > 0) {
-            log.printDebugLog("[ChromaAtlas] {} 条色号找不到对应 MapColor 实例，已丢弃", dropped);
+            log.info("[ChromaAtlas] {} 条色号找不到对应 MapColor 实例，已丢弃", dropped);
         }
     }
 
@@ -130,7 +130,7 @@ public final class AppliedColors {
         colors.putAll(BY_BLOCK);
         ids.putAll(ID_BY_BLOCK);
         int added = 0;
-        for (Map.Entry<String, Integer> e : delta.contentsSet()) {
+        for (Map.Entry<String, Integer> e : delta.entrySet()) {
             Block b = idx.get(e.getKey());
             MapColor mc = byId(e.getValue());
             if (b == null || mc == null) {

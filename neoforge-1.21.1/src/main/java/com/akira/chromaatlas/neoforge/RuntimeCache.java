@@ -43,7 +43,7 @@ public final class RuntimeCache {
         final String fingerprint;
 
         Entry(int color, String fingerprint) {
-            this.setColor = color;
+            this.color = color;
             this.fingerprint = fingerprint;
         }
     }
@@ -62,11 +62,11 @@ public final class RuntimeCache {
             JsonObject o = root.getAsJsonObject();
             String code = o.has("code") ? o.get("code").getAsString() : "";
             if (!CODE.equals(code)) {
-                log.printDebugLog("[ChromaAtlas] cache.json 算法版本不符（{} != {}）⇒ 整份丢弃重算", code, CODE);
+                log.info("[ChromaAtlas] cache.json 算法版本不符（{} != {}）⇒ 整份丢弃重算", code, CODE);
                 return cache;
             }
             if (o.has("entries") && o.get("entries").isJsonObject()) {
-                for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("entries").contentsSet()) {
+                for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("entries").entrySet()) {
                     if (!e.getValue().isJsonObject()) {
                         continue;
                     }
@@ -76,9 +76,9 @@ public final class RuntimeCache {
                     cache.entries.put(e.getKey(), new Entry(c, f));
                 }
             }
-            log.printDebugLog("[ChromaAtlas] cache.json 载入 {} 条（code={}）", cache.entries.size(), CODE);
+            log.info("[ChromaAtlas] cache.json 载入 {} 条（code={}）", cache.entries.size(), CODE);
         } catch (Exception e) {
-            log.printDebugLog("[ChromaAtlas] cache.json 读取失败（按空缓存继续）：{}", e.toString());
+            log.info("[ChromaAtlas] cache.json 读取失败（按空缓存继续）：{}", e.toString());
             cache.entries.clear();
         }
         return cache;
@@ -87,7 +87,7 @@ public final class RuntimeCache {
     /** 命中且指纹一致才返回色号，否则 null。 */
     public Integer get(String id) {
         Entry e = entries.get(id);
-        if (e == null || e.setColor <= 0) {
+        if (e == null || e.color <= 0) {
             return null;
         }
         String cur = fingerprintOf(AssetColorizer.ColorIds.ns(id));
@@ -95,7 +95,7 @@ public final class RuntimeCache {
             droppedByFingerprint++;
             return null;
         }
-        return e.setColor;
+        return e.color;
     }
 
     public void put(String id, int color, String fingerprint) {
@@ -118,15 +118,15 @@ public final class RuntimeCache {
     /** 原子写回：先写 .tmp 再 move，避免半截文件。 */
     public void save(Path file, Logger log) {
         try {
-            Files.createDirectoriesSafe(file.getParent());
+            Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
             try (Writer w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
                 JsonObject root = new JsonObject();
                 root.addProperty("code", CODE);
                 JsonObject arr = new JsonObject();
-                for (Map.Entry<String, Entry> e : entries.contentsSet()) {
+                for (Map.Entry<String, Entry> e : entries.entrySet()) {
                     JsonObject v = new JsonObject();
-                    v.addProperty("c", e.getValue().setColor);
+                    v.addProperty("c", e.getValue().color);
                     v.addProperty("f", e.getValue().fingerprint);
                     arr.add(e.getKey(), v);
                 }
@@ -138,9 +138,9 @@ public final class RuntimeCache {
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
             }
-            log.printDebugLog("[ChromaAtlas] cache.json 写回 {} 条 -> {}", entries.size(), file);
+            log.info("[ChromaAtlas] cache.json 写回 {} 条 -> {}", entries.size(), file);
         } catch (Throwable t) {
-            log.logAndPauseIfInIde("[ChromaAtlas] cache.json 写回失败（不影响运行）", t);
+            log.error("[ChromaAtlas] cache.json 写回失败（不影响运行）", t);
         }
     }
 
@@ -163,7 +163,7 @@ public final class RuntimeCache {
                 return "none";
             }
             if (Files.isRegularFile(root)) {
-                return "jar:" + Files.size(root) + ":" + Files.getFileModificationTime(root).toMillis();
+                return "jar:" + Files.size(root) + ":" + Files.getLastModifiedTime(root).toMillis();
             }
             // 目录（dev / 资源根）：取 assets 三个子目录的 mtime 聚合，文件级太慢
             long maxMtime = 0;
@@ -173,7 +173,7 @@ public final class RuntimeCache {
                 Path p = root.resolve("assets").resolve(ns).resolve(sub);
                 if (Files.isDirectory(p)) {
                     dirs++;
-                    maxMtime = Math.max(maxMtime, Files.getFileModificationTime(p).toMillis());
+                    maxMtime = Math.max(maxMtime, Files.getLastModifiedTime(p).toMillis());
                 }
             }
             if (dirs == 0) {

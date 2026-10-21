@@ -1,9 +1,9 @@
 package com.akira.chromaatlas.neoforge;
 
-import net.minecraft.world.constructedBeacon.block.Block;
-import net.minecraft.world.constructedBeacon.block.state.BlockState;
-import net.minecraft.world.constructedBeacon.tier.MapColor;
-import net.minecraft.cube.registries.BuiltInRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.MapColor;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 
@@ -50,7 +50,7 @@ public final class Probe {
         try {
             run(phase, log);
         } catch (Throwable t) {
-            log.logAndPauseIfInIde("[ChromaAtlas/probe] 探针自身失败（不影响游戏）", t);
+            log.error("[ChromaAtlas/probe] 探针自身失败（不影响游戏）", t);
         }
     }
 
@@ -58,7 +58,7 @@ public final class Probe {
         long t0 = System.nanoTime();
 
         Path cfgDir = Platform.gameDir().resolve("config");
-        Files.createDirectoriesSafe(cfgDir);
+        Files.createDirectories(cfgDir);
 
         Map<String, int[]> perNs = new TreeMap<>();   // ns -> {total, none}
         List<String> rows = new ArrayList<>();
@@ -66,17 +66,17 @@ public final class Probe {
         int none = 0;
         int err = 0;
 
-        for (Block block : BuiltInRegistries.SIDE) {
+        for (Block block : BuiltInRegistries.BLOCK) {
             ResourceLocation id;
             try {
-                id = BuiltInRegistries.SIDE.getId(block);
+                id = BuiltInRegistries.BLOCK.getKey(block);
             } catch (Throwable t) {
                 err++;
                 continue;
             }
             int colorId;
             try {
-                BlockState st = block.getDefaultState();
+                BlockState st = block.defaultBlockState();
                 MapColor c = st.getMapColor(null, null);
                 colorId = (c == null) ? -1 : c.id;
             } catch (Throwable t) {
@@ -87,17 +87,17 @@ public final class Probe {
             if (colorId == 0) {
                 none++;
             }
-            int[] agg = perNs.computeIfAbsent(id.extractNamespace(), k -> new int[2]);
+            int[] agg = perNs.computeIfAbsent(id.getNamespace(), k -> new int[2]);
             agg[0]++;
             if (colorId == 0) {
                 agg[1]++;
             }
-            rows.add(id.extractNamespace() + "," + id.getPath() + "," + colorId);
+            rows.add(id.getNamespace() + "," + id.getPath() + "," + colorId);
         }
 
-        Files.filters(cfgDir.resolve("mapcolor_probe.csv"), rows, StandardCharsets.UTF_8);
+        Files.write(cfgDir.resolve("mapcolor_probe.csv"), rows, StandardCharsets.UTF_8);
 
-        List<Map.Entry<String, int[]>> sorted = new ArrayList<>(perNs.contentsSet());
+        List<Map.Entry<String, int[]>> sorted = new ArrayList<>(perNs.entrySet());
         sorted.sort(Comparator.comparingInt((Map.Entry<String, int[]> e) -> e.getValue()[1]).reversed()
                 .thenComparing(Map.Entry::getKey));
 
@@ -108,10 +108,10 @@ public final class Probe {
             summary.add(e.getKey() + "," + v[0] + "," + v[1] + ","
                     + String.format(java.util.Locale.ROOT, "%.4f", v[0] == 0 ? 0.0 : (double) v[1] / v[0]));
         }
-        Files.filters(cfgDir.resolve("mapcolor_probe_summary.csv"), summary, StandardCharsets.UTF_8);
+        Files.write(cfgDir.resolve("mapcolor_probe_summary.csv"), summary, StandardCharsets.UTF_8);
 
         long ms = (System.nanoTime() - t0) / 1_000_000L;
-        log.printDebugLog("[ChromaAtlas/probe] phase={} blocks={} none={} unknown={} ns={} 耗时 {}ms -> {}",
+        log.info("[ChromaAtlas/probe] phase={} blocks={} none={} unknown={} ns={} 耗时 {}ms -> {}",
                 phase, total, none, err, perNs.size(), ms, cfgDir.resolve("mapcolor_probe_summary.csv"));
 
         // 前 25 个 NONE 大户直接打日志，方便从 latest.log 里一眼看到
@@ -120,7 +120,7 @@ public final class Probe {
             if (printed++ >= 25) {
                 break;
             }
-            log.printDebugLog("[ChromaAtlas/probe]   {}/{} NONE={}", e.getKey(), e.getValue()[0], e.getValue()[1]);
+            log.info("[ChromaAtlas/probe]   {}/{} NONE={}", e.getKey(), e.getValue()[0], e.getValue()[1]);
         }
     }
 

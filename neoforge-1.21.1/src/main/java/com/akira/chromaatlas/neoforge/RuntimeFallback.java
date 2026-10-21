@@ -1,7 +1,7 @@
 package com.akira.chromaatlas.neoforge;
 
-import com.akira.chromaatlas.cube.AtlasConfig;
-import com.akira.chromaatlas.cube.ColorSnapshot;
+import com.akira.chromaatlas.core.AtlasConfig;
+import com.akira.chromaatlas.core.ColorSnapshot;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
@@ -54,11 +54,11 @@ public final class RuntimeFallback {
     public static void start(List<String> candidates, AtlasConfig cfg, ColorSnapshot snap,
                              Path cacheFile, Logger log, boolean dryRun) {
         if (candidates == null || candidates.isEmpty()) {
-            log.printDebugLog("[ChromaAtlas/fallback] 无待补方块，跳过");
+            log.info("[ChromaAtlas/fallback] 无待补方块，跳过");
             return;
         }
         if (running) {
-            log.printDebugLog("[ChromaAtlas/fallback] 已在运行，忽略重复启动");
+            log.info("[ChromaAtlas/fallback] 已在运行，忽略重复启动");
             return;
         }
         running = true;
@@ -80,7 +80,7 @@ public final class RuntimeFallback {
         int batchSize = Math.max(1, cfg.fallbackBatchSize);
         int sleepMs = Math.max(0, cfg.fallbackSleepMs);
         try {
-            log.printDebugLog("[ChromaAtlas/fallback] 开始：{} 个候选（batch={} sleep={}ms dryRun={}）",
+            log.info("[ChromaAtlas/fallback] 开始：{} 个候选（batch={} sleep={}ms dryRun={}）",
                     candidates.size(), batchSize, sleepMs, dryRun);
 
             for (String id : candidates) {
@@ -108,7 +108,7 @@ public final class RuntimeFallback {
                         delta.clear();
                     }
                     if (sleepMs > 0) {
-                        Thread.startSleeping(sleepMs);
+                        Thread.sleep(sleepMs);
                     }
                 }
             }
@@ -123,19 +123,19 @@ public final class RuntimeFallback {
             lastReused = reused;
             lastFailed = failed;
             lastElapsedMs = ms;
-            log.printDebugLog("[ChromaAtlas/fallback] 完成：computed={} reused={} failed={} batches={} "
+            log.info("[ChromaAtlas/fallback] 完成：computed={} reused={} failed={} batches={} "
                             + "贴图解码成功/失败={}/{} 快照={} 耗时={}ms",
                     computed, reused, failed, batches,
                     colorizer.decodedTextures(), colorizer.failedTextures(),
                     snap.size(), ms);
             if (failed > 0) {
-                log.printDebugLog("[ChromaAtlas/fallback] 有 {} 个方块算不出色（无模型/贴图缺失/全透明）⇒ 已跳过，未写入 0", failed);
+                log.info("[ChromaAtlas/fallback] 有 {} 个方块算不出色（无模型/贴图缺失/全透明）⇒ 已跳过，未写入 0", failed);
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            log.printDebugLog("[ChromaAtlas/fallback] 被中断，已算的 {} 条保留", computed + reused);
+            log.info("[ChromaAtlas/fallback] 被中断，已算的 {} 条保留", computed + reused);
         } catch (Throwable t) {
-            log.logAndPauseIfInIde("[ChromaAtlas/fallback] 线程异常（不影响游戏，已算的结果仍有效）", t);
+            log.error("[ChromaAtlas/fallback] 线程异常（不影响游戏，已算的结果仍有效）", t);
         } finally {
             colorizer.close();
             running = false;
