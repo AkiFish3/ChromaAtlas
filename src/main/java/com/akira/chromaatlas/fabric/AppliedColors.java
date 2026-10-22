@@ -95,8 +95,16 @@ public final class AppliedColors {
         BLOCK_BY_ID = Collections.unmodifiableMap(new HashMap<>(blockById));
         dryRun = isDryRun;
         if (isDryRun) {
+            // ★R85 第 27 轮★ 以前这里直接 return，BY_BLOCK 保持上一次 install 的内容 ⇒
+            // 「跑到一半改成 dryRun=true 再 reload」时旧覆盖色仍然生效（dryRun 只是日志好看）。
+            // dryRun 的语义是「不写入」，所以必须把已装的那份也清掉。
+            int had = BY_BLOCK.size();
+            BY_BLOCK = Collections.emptyMap();
+            ID_BY_BLOCK = Collections.emptyMap();
+            applied = 0;
             dryRunPlanned = planned.size();
-            log.info("[ChromaAtlas] dryRun=true ⇒ 计划写入 {} 条，实际写入 0 条", planned.size());
+            log.info("[ChromaAtlas] dryRun=true ⇒ 计划写入 {} 条，实际写入 0 条{}",
+                    planned.size(), had > 0 ? "（已清除上一轮的 " + had + " 条覆盖色）" : "");
             return;
         }
         Map<Block, MapColor> colors = new HashMap<>(Math.max(16, planned.size() * 2));
