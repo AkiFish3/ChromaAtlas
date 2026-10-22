@@ -135,7 +135,7 @@ public final class AtlasRuntime {
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
 
         Plan plan = scanAndPlan(table, config, log);
-        AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
+        int written = installPlan(plan, config, log);
         AppliedColors.appliedManual = plan.manual;
         AppliedColors.appliedAuto = plan.auto;
         AppliedColors.skippedHasColor = plan.skipHasColor;
@@ -145,13 +145,17 @@ public final class AtlasRuntime {
 
         log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
                         + "/ 透明 {} / 注册表 {} 方块 / 基线 NONE {} / {}ms",
-                config.dryRun ? 0 : plan.planned.size(), plan.manual, plan.auto,
+                written, plan.manual, plan.auto,
                 plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid, plan.skipTransparent,
                 plan.total, plan.none, (System.nanoTime() - t0) / 1_000_000L);
 
-        verify(plan, log);
+        verify(plan, log, config.mixinGetMapColor && !config.dryRun);
 
-        if (config.runtimeFallback && !plan.candidates.isEmpty()) {
+        if (!config.mixinGetMapColor) {
+            // 装不进去 ⇒ 兜底算了也没地方放，直接不启动（否则白烧 CPU）
+            log.info("[ChromaAtlas] mixinGetMapColor=false ⇒ 兜底线程不启动（算出来也无处生效），候选 {} 条不动",
+                    plan.candidates.size());
+        } else if (config.runtimeFallback && !plan.candidates.isEmpty()) {
             Path configRoot = AtlasFiles.dir(dir).getParent();
             Path cacheFile = configRoot.resolve(config.runtimeCacheFile);
             RuntimeFallback.start(plan.candidates, config, SNAPSHOT, cacheFile, log, config.dryRun);
@@ -177,13 +181,39 @@ public final class AtlasRuntime {
         AtlasFiles.loadOverrides(gameDir, table, log);
         transparency = AtlasFiles.loadTransparency(gameDir, log);
         SNAPSHOT.replaceAuto(table.autoView());
+        // ★R83 第 27 轮★ reload 必须和 boot 走同一条解析链：config 是新 new 的，
+        // effectiveStrategy 为 null ⇒ strategy() 会退回硬编码的 fill-missing-model
+        // （默认 colorStrategy=auto 的机器上，reload 一次就把已补的色全抹掉，日志还看不出来）。
+        resolveStrategy(config, log);
+        log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
+                config.strategy(), config.onlyFillNone, config.dryRun, config.runtimeFallback,
+                config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
         Plan plan = scanAndPlan(table, config, log);
-        AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
-        verify(plan, log);
+        int written = installPlan(plan, config, log);
+        verify(plan, log, config.mixinGetMapColor && !config.dryRun);
         log.info("[ChromaAtlas] reload 完成：strategy={} 写入 {} / 候选 {} / {}ms",
-                config.strategy(), config.dryRun ? 0 : plan.planned.size(),
+                config.strategy(), written,
                 plan.candidates.size(), (System.nanoTime() - t0) / 1_000_000L);
         lastStrategy = config.strategy();
+    }
+
+    /**
+     * 按配置把计划装进 {@link AppliedColors}，返回真正写入的条数。
+     *
+     * <p>★R84 第 27 轮★ {@code mixinGetMapColor=false} 以前是**零读取方的配置键**
+     * （只在 loadConfig / writeDefaultConfig / SelfTest 出现）⇒ 玩家关掉它毫无反应。
+     * 现在落地为「不安装覆盖色」：两条 mixin 都是「命中表就返回，否则放行原版」，
+     * 表空 = 完全放行 ⇒ 语义等价于关掉 overlay（mixin 本身在类加载期就定了，运行期只能这样关）。
+     */
+    private static int installPlan(Plan plan, AtlasConfig cfg, Logger log) {
+        Map<Block, Integer> apply = plan.planned;
+        if (!cfg.mixinGetMapColor) {
+            log.info("[ChromaAtlas] ★配置★ mixinGetMapColor=false ⇒ 不安装覆盖色（计划 {} 条全部不生效，"
+                    + "两张 mixin 都放行原版）", plan.planned.size());
+            apply = java.util.Collections.emptyMap();
+        }
+        AppliedColors.install(apply, BY_ID, cfg.dryRun, log);
+        return cfg.dryRun ? 0 : apply.size();
     }
 
     static String strategy() {
@@ -335,9 +365,13 @@ public final class AtlasRuntime {
      *
      * <p>这条是 M4 的「mixin 真的挂上了」的无头证据 —— 不需要进世界，也不用截图。
      */
-    private static void verify(Plan plan, Logger log) {
-        if (config.dryRun) {
-            log.info("[ChromaAtlas] verify 跳过（dryRun=true，未写入）");
+    private static void verify(Plan plan, Logger log, boolean installed) {
+        if (!installed) {
+            AppliedColors.verifySampled = 0;
+            AppliedColors.verifyOk = 0;
+            AppliedColors.verifyMismatch = 0;
+            log.info("[ChromaAtlas] verify 跳过（{}）",
+                    config.dryRun ? "dryRun=true，未写入" : "mixinGetMapColor=false，未安装覆盖色");
             return;
         }
         int sampled = 0, ok = 0, bad = 0;

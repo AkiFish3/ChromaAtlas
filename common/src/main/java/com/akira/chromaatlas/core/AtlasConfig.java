@@ -80,13 +80,20 @@ public final class AtlasConfig {
 
     /**
      * 是否写回 {@code BlockBehaviour.Properties.mapColor}。
-     * <p>★已废弃，恒为 false★ M2 的 javap 实证（R15）：{@code getMapColor} 返回 per-state 的
-     * private final 字段，{@code mapColorProvider} 只在 state 构造时求值一次 ⇒ 注册表冻结后改 Settings 无效。
-     * 保留字段只为配置向后兼容，M8 会从默认配置里删掉。
+     * <p>★已废弃，恒为 false，且<b>没有任何读方</b>★ M2 的 javap 实证（R15）：
+     * {@code getMapColor} 返回 per-state 的 private final 字段，{@code mapColorProvider} 只在
+     * state 构造时求值一次 ⇒ 注册表冻结后改 Settings 无效。字段只为配置向后兼容保留（R86）。
      */
     public boolean writeBackProperties = false;
 
-    /** 是否启用 mixin getMapColor 覆盖（关掉只做属性写回）。 */
+    /**
+     * 是否启用覆盖（两条 mixin 的实际生效开关），默认 true。
+     *
+     * <p>★R78 第 27 轮修正★ 这段 javadoc 以前写「关掉只做属性写回」——那是错的：
+     * 属性写回本身已作废（见 {@link #writeBackProperties}），所以「关掉」原本是**空操作**。
+     * 现在的落地语义是「不安装覆盖色」：mixin 在类加载期就定了，运行期只能靠「表为空 ⇒ 恒放行」
+     * 来关闭，效果等价于原版行为；同时兜底线程也不再启动。
+     */
     public boolean mixinGetMapColor = true;
 
     /**
