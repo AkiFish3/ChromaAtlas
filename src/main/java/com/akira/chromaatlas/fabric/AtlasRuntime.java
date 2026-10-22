@@ -127,10 +127,12 @@ public final class AtlasRuntime {
         transparency = AtlasFiles.loadTransparency(dir, log);
         SNAPSHOT.replaceAuto(table.autoView());
 
+        // ★顺序★ 必须先解析 auto 再打印，否则两行日志自相矛盾
+        // （第 20 轮实测：先打 `strategy=fill-missing-model`，下一行又说「实际 fill-none」）
+        resolveStrategy(config, log);
         log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
                 config.strategy(), config.onlyFillNone, config.dryRun, config.runtimeFallback,
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
-        resolveStrategy(config, log);
 
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
