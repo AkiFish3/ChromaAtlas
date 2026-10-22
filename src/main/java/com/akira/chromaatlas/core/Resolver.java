@@ -30,7 +30,7 @@ public final class Resolver {
         SKIP_NO_DATA,
         /** 表里有但值非法（0 / 未使用槽位）。 */
         SKIP_INVALID_COLOR,
-        /** fill-missing-model 策略下「有模型」⇒ Xaero 本来渲染得出，不补。 */
+        /** fill-missing-model 策略下「有模型」⇒ 跳过（该策略是结构性空操作，仅为兼容保留）。 */
         SKIP_HAS_MODEL,
         /** M-8：透明方块（玻璃/窗格/天窗）—— 原版语义就是地图上不画，补了是真降级。 */
         REFUSED_TRANSPARENT
@@ -93,11 +93,17 @@ public final class Resolver {
         if (cfg.onlyFillNone && current != 0 && !force) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_COLOR, false);
         }
+        // ★第 34 轮★ 原版的 NONE 是「有意留空」（火把/铁轨/花盆…），补了就是把非满方块
+        // 刷成满格色 ⇒ 地图糊成色块。放在「已有色」判定之后：原版本来有色的仍记「已有色」，
+        // 只有那 ~105 个 NONE 的才会落进「命名空间」计数，日志口径不变。
+        if (cfg.protectVanilla && id.startsWith("minecraft:")) {
+            return new Decision(id, current, -1, Reason.SKIP_NAMESPACE, false);
+        }
         Integer aut = table.autoOf(id);
         if (aut == null) {
             return new Decision(id, current, -1, Reason.SKIP_NO_DATA, false);
         }
-        // fill-missing-model：只补贴图路径本来就会失败的方块（不劣化 Xaero 的贴图着色，见 R12）
+        // fill-missing-model：只处理 m=0 的条目 —— 而 m=0 必然 c=-1 ⇒ 结构上一条都补不了（第 18 轮实证）
         if ("fill-missing-model".equals(cfg.strategy()) && !table.isNoModel(id)) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_MODEL, false);
         }

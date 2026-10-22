@@ -18,42 +18,40 @@ public final class AtlasConfig {
     public boolean dryRun = false;
 
     /**
-     * 补色策略（§1.5 / M9 重新定档）：
+     * 补色策略（★M-7 第 34 轮重定档★）：
      * <ul>
-     *   <li>{@code fill-missing-model}：<b>默认</b>。只补「NONE 且离线判定无模型/贴图」
-     *       —— 这些方块 Xaero 的贴图采样路径本来就会失败，补色是纯收益，<b>零降级</b></li>
-     *   <li>{@code fill-none}：补所有 NONE。<b>会让 Xaero 丢纹理细节</b>（它本来按贴图均值着色），
-     *       只有在「不用 Xaero / 主要用 FTB Chunks、JourneyMap」时才该开</li>
+     *   <li>{@code fill-none}：<b>默认</b>。补所有 {@code mapColor == NONE} 的方块（透明件除外，见 skipTransparent）</li>
+     *   <li>{@code fill-missing-model}：结构性空操作（出厂表 {@code m=0 ⇒ c=-1}），仅为兼容旧配置保留</li>
      *   <li>{@code force}：连本来有色的也覆盖（调试）</li>
+     *   <li>{@code auto}：<b>已废弃</b>，等价 {@code fill-none}（旧配置里写着它的机器会自动被修好）</li>
      * </ul>
      *
-     * <p>★M9 改默认值的原因★（实测同帧 + 离线 ΔE 全表审计）：
-     * Xaero 对 {@code mapColor == NONE} 走 {@code loadBlockColourFromTexture}（javap 实证），
-     * coc/minia 这类家具本来就有木纹/花纹，被改写成 61 色单色后细节全部抹平。
-     * 离线审计 coc 9554 条：ΔE 中位 ≈8，但 <b>ΔE 小 ≠ 细节没丢</b> ⇒ 阈值型「色差保护」治不了本，
-     * 唯一不降级的默认就是「只补采样必失败的那些」。
+     * <p>★为什么推翻 M9 的「Xaero 降级」结论★ M9 只看了 {@code loadBlockColourFromTexture}
+     * 这条贴图采样兜底路径，推断「补色会抹平纹理」。第 33 轮双地图实拍（同存档 / 同坐标 / 同帧）证伪：
+     * Xaero 对 coc 这类自定义模型采样失败 ⇒ 直接画黑块，补色后黑块 14.969% → 0.151%。
+     * 所有地图 mod 的着色粒度都是「每方块一色」，<b>不补的结果是黑洞，补了才是平色</b>；
+     * 「平色 vs 黑洞」不是降级。两个 mod 对同一批方块的表现一致（FTB 只是地形细节更亮）。
      */
-    public String colorStrategy = "auto";
+    public String colorStrategy = "fill-none";
 
     /**
      * {@code auto} 解析后的实际策略；{@code null} = 还没解析。
      *
      * <p>★M9 第 18 轮★ {@code fill-missing-model} 被证明是**结构性空操作**：
      * 出厂表里 {@code m=0}（无模型）的条目 {@code c} 必然是 {@code -1}（无贴图 ⇒ 算不出色），
-     * 所以「只补无模型的」= 一条都补不了（bundled 表实测可写 0 条）。把默认值定成它
-     * 等于默认把 mod 关掉。故改成按运行环境自动选：
-     * <ul>
-     *   <li>装了 Xaero（minimap/worldmap）⇒ {@code fill-missing-model}（不降级，实质不动）</li>
-     *   <li>没装 Xaero ⇒ {@code fill-none}（FTB Chunks / 原版地图里 NONE 是纯黑，补色是纯收益）</li>
-     * </ul>
+     * 所以「只补无模型的」= 一条都补不了（bundled 表实测可写 0 条）。
+     *
+     * <p>★M-7 第 34 轮★ 连「装了 Xaero ⇒ fill-missing-model」这层自动判断也删掉了 ——
+     * 它等于「在最主流的机器上默认把 mod 关掉」，而实拍证明补色对 Xaero 是纯收益。
+     * 现在 {@code auto} 一律解析成 {@code fill-none}，只是旧配置的兼容别名。
      */
     private String effectiveStrategy;
 
-    /** 实际生效的策略（{@code auto} 未解析时按最保守的 {@code fill-missing-model}）。 */
+    /** 实际生效的策略（{@code auto} 未解析时按 {@code fill-none}）。 */
     public String strategy() {
         // 显式配置永远优先：reload 改了 colorStrategy 之后不能被上一次 applyAuto 的结果盖住
         if ("auto".equals(colorStrategy)) {
-            return effectiveStrategy == null ? "fill-missing-model" : effectiveStrategy;
+            return effectiveStrategy == null ? "fill-none" : effectiveStrategy;
         }
         return colorStrategy;
     }
@@ -63,14 +61,27 @@ public final class AtlasConfig {
      *
      * @return 实际策略名（供日志）
      */
-    public String applyAuto(boolean xaeroPresent) {
+    public String applyAuto() {
         if ("auto".equals(colorStrategy)) {
-            effectiveStrategy = xaeroPresent ? "fill-missing-model" : "fill-none";
+            effectiveStrategy = "fill-none";
         } else {
             effectiveStrategy = colorStrategy;
         }
         return effectiveStrategy;
     }
+
+    /**
+     * 保护原版：{@code minecraft:} 命名空间一律不补（★第 34 轮★）。
+     *
+     * <p>原版有 126 个方块的 {@code mapColor} 是 {@code NONE}，全部是<b>非满方块</b>
+     * （火把、铁轨、红石线、梯子、铁栏杆、花盆、作物…）。原版地图对它们的处理是
+     * 「不上色，露出下面的方块」；一旦补成满格色，一片花田/铁轨会在地图上糊成色块。
+     *
+     * <p>实证（1.20.1 探针 CSV × 出厂表）：126 个里有 <b>123 个</b>能算出颜色，
+     * 而 dev 服务端「105 条写入」全部来自这些原版方块 ⇒ 不挡掉就是纯劣化。
+     * 想要连原版一起补（例如自建地图墙），把它改成 {@code false}。
+     */
+    public boolean protectVanilla = true;
 
     /** 非空时 = 白名单：只处理这些命名空间。 */
     public Set<String> enabledNamespaces = new LinkedHashSet<>();
