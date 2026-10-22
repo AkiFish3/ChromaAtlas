@@ -3,7 +3,6 @@ package com.akira.chromaatlas.fabric;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
-import net.minecraft.block.MapColor;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
@@ -78,10 +77,12 @@ public final class Probe {
             int colorId;
             try {
                 BlockState st = block.getDefaultState();
-                MapColor c = st.getMapColor(null, null);
-                colorId = (c == null) ? -1 : c.id;
+                // ★第 32 轮 / R107★ 不许再写 st.getMapColor(null, null)：1.21.1 上
+                // bountifulfares 的 mixin 会直接 world.getBlockState(pos) ⇒ 全表 NPE。
+                // RawColors 走 per-state 字段反射 + 方块级兜底，两级都不碰 world。
+                colorId = RawColors.color(st, block);
             } catch (Throwable t) {
-                // 第三方 getMapColor 可能用 BlockView/BlockPos，传 null 会炸 -> 记为 -2（未知）
+                // 连 defaultState / 反射都拿不到（极少）⇒ 记为 -2（未知），不进 NONE 统计
                 colorId = -2;
             }
             total++;

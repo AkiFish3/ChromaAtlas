@@ -51,9 +51,10 @@ public final class AtlasRuntime {
     /** ★M-10★ 上次扫描的循环体进入次数 / 单块异常次数（诊断用）。 */
     private static volatile int lastIterated;
     private static volatile int lastCaught;
-    /** ★M-10★ per-state {@code mapColor} 字段（懒查；null = 不可用 ⇒ 走方块级兜底）。 */
-    private static java.lang.reflect.Field STATE_MAP_COLOR;
-    private static boolean stateColorProbed;
+    /**
+     * ★第 32 轮★ per-state {@code mapColor} 字段的懒查与反射读取统一在 {@link RawColors} 里，
+     * 本类不再自己持有（原先只有这里一处实现，Probe / Preflight 各自又写了一遍 null world）。
+     */
     /** ★M-10★ 基线取色走的路径计数（让日志能自证用的是哪一级，不靠猜）。 */
     private static volatile int rawViaReflect;
     private static volatile int rawViaBlock;
@@ -303,46 +304,15 @@ public final class AtlasRuntime {
      * ② 反射不可用时退回方块级 {@code getDefaultMapColor()}（同样不吃 world）。
      */
     private static int rawColor(BlockState st, Block block) {
-        java.lang.reflect.Field f = stateMapColorField();
-        if (f != null) {
-            try {
-                Object v = f.get(st);
-                if (v instanceof MapColor) {
-                    rawViaReflect++;
-                    return ((MapColor) v).id;
-                }
-            } catch (Throwable ignored) {
-                // 单个 state 读不到 ⇒ 走方块级兜底
-            }
+        // ★第 32 轮★ 实现搬到 {@link RawColors}：Probe / Preflight 原先还写着
+        // getMapColor(null, null)，触发条件一样会被第三方 mixin 打穿（R107 同族）。
+        int id = RawColors.reflect(st);
+        if (id >= 0) {
+            rawViaReflect++;
+            return id;
         }
         rawViaBlock++;
-        MapColor c = block.getDefaultMapColor();
-        return c == null ? 0 : c.id;
-    }
-
-    /** per-state {@code mapColor} 字段（懒查一次；字段名在两个平台上都被混淆，所以按类型找）。 */
-    private static java.lang.reflect.Field stateMapColorField() {
-        if (!stateColorProbed) {
-            stateColorProbed = true;
-            try {
-                Class<?> c = BlockState.class;
-                while (c != null && c != Object.class && STATE_MAP_COLOR == null) {
-                    for (java.lang.reflect.Field f : c.getDeclaredFields()) {
-                        if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
-                                || f.getType() != MapColor.class) {
-                            continue;
-                        }
-                        f.setAccessible(true);
-                        STATE_MAP_COLOR = f;
-                        break;
-                    }
-                    c = c.getSuperclass();
-                }
-            } catch (Throwable ignored) {
-                STATE_MAP_COLOR = null;
-            }
-        }
-        return STATE_MAP_COLOR;
+        return RawColors.blockLevel(block);
     }
 
     /**
@@ -515,6 +485,8 @@ public final class AtlasRuntime {
             String via;
             try {
                 // ① 状态级：这一条才真正证明「状态级 mixin 挂上了」
+                // ★故意保留 null world★ 这里要的正是「走 mixin 后的返回值」；RawColors 会绕开 mixin，
+                // 拿来验证等于自己证明自己。抛异常时下面三级降级会如实标注 via=block/table。
                 MapColor c = st.getMapColor(null, null);
                 actual = c == null ? -1 : c.id;
                 via = "state";

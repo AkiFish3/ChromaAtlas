@@ -7,7 +7,6 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
-import net.minecraft.block.MapColor;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
@@ -103,8 +102,8 @@ public final class Preflight {
                 try {
                     id = Registries.BLOCK.getId(block);
                     BlockState st = block.getDefaultState();
-                    MapColor c = st.getMapColor(null, null);
-                    if (c != null && c.id != 0) {
+                    // ★第 32 轮 / R107★ 不再 st.getMapColor(null, null)（第三方 mixin 会用 world ⇒ NPE）
+                    if (RawColors.color(st, block) != 0) {
                         continue; // 只关心本来没色的
                     }
                 } catch (Throwable t) {
