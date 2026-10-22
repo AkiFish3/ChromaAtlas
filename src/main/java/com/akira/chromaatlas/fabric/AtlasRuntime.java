@@ -244,6 +244,23 @@ public final class AtlasRuntime {
             }
         }
 
+        // ★M8：配置校验必须显式报错，不能静默★
+        // 手工表 = 人写的，任何错都报；自动表是离线产物，本实例没装的模组条目属正常，只报数量。
+        List<String> badManual = tbl.invalidManualIds();
+        if (!badManual.isEmpty()) {
+            log.info("[ChromaAtlas] ★配置错误★ overrides.json 非法色号 {} 条（合法 1..{}）：{}",
+                    badManual.size(), com.akira.chromaatlas.core.VanillaMapColors.MAX_ID, head(badManual, 10));
+        }
+        List<String> unkManual = tbl.unknownManualIds(byId.keySet());
+        if (!unkManual.isEmpty()) {
+            log.info("[ChromaAtlas] ★配置错误★ overrides.json 有 {} 个 id 不在当前注册表里（拼错 / 模组已卸载）：{}",
+                    unkManual.size(), head(unkManual, 10));
+        }
+        int unkAuto = tbl.unknownAutoCount(byId.keySet());
+        if (unkAuto > 0) {
+            log.info("[ChromaAtlas] mapcolors.json 有 {} 条属于本实例没装的方块（出厂表覆盖更多模组，正常）", unkAuto);
+        }
+
         List<Map.Entry<String, Integer>> top = new ArrayList<>(p.byNamespaceNone.entrySet());
         top.sort((a, b) -> b.getValue() - a.getValue());
         StringBuilder sb = new StringBuilder();
@@ -255,6 +272,14 @@ public final class AtlasRuntime {
         }
         log.info("[ChromaAtlas] NONE 基线：{} 个（{} 个 ns 有缺口）Top10 {}", p.none, p.byNamespaceNone.size(), sb);
         return p;
+    }
+
+    /** 日志里只列前 n 条，避免把 3 万条表的差异刷满屏幕。 */
+    private static String head(List<String> list, int n) {
+        if (list.size() <= n) {
+            return list.toString();
+        }
+        return list.subList(0, n) + " …(共 " + list.size() + " 条)";
     }
 
     /**

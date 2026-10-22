@@ -15,6 +15,9 @@ public final class VanillaMapColors {
     /** 槽位总数（原版 COLORS 数组长度）。 */
     public static final int SLOTS = 64;
 
+    /** 可用色号上限（1..61；0 = CLEAR/NONE，62/63 原版未使用）。配置校验用它报错。 */
+    public static final int MAX_ID = 61;
+
     /** id -> 0xRRGGBB。缺少的槽位是 -1，不是黑色。 */
     private static final int[] RGB = new int[SLOTS];
     private static final String[] NAMES = new String[SLOTS];
