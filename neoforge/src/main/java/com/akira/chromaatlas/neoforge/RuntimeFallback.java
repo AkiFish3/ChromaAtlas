@@ -5,7 +5,11 @@ import com.akira.chromaatlas.core.ColorSnapshot;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,14 +22,31 @@ import java.util.Map;
  *
  * <p>★读侧零成本★ 后台每算完一批调 {@link ColorSnapshot#mergeAuto} 整体换引用；
  * 未算完期间 {@code getMapColor} 命中不到就返回 -1 ⇒ 保持原版 NONE，不加锁、不阻塞。
+ *
+ * <p>★M-13：失败不再是黑盒★ 以前只有一句「有 N 个方块算不出色（无模型/贴图缺失/全透明）」，
+ * 三条完全不同的修复路线挤在一起。现在按 {@link AssetColorizer.Fail} 分类计数，每个原因
+ * 附最多 {@value #SAMPLE_PER_REASON} 个 id，并且能通过 {@code /chromaatlas status} 回看。
  */
 public final class RuntimeFallback {
+
+    /**
+     * 每个失败原因最多打印/保留多少个 id。
+     *
+     * <p>★为什么是 40 而不是 10★ 实测 1.20.1-TEST 的残余失败正好 23 个（NO_CONTAINER 22 +
+     * NO_TEXTURE_REF 1），第一版按 10 个截断 ⇒ 只看到 10 个 id，M-14/M-16 该不该做依然判断不了。
+     * 残余集本来就是「表里没有 + NONE」的尾巴，量级是几十不是几万 ⇒ 一次打全比猜便宜。
+     */
+    private static final int SAMPLE_PER_REASON = 40;
 
     private static volatile boolean running;
     private static volatile int lastComputed = -1;
     private static volatile int lastReused = -1;
     private static volatile int lastFailed = -1;
     private static volatile long lastElapsedMs = -1;
+    /** 上一轮的失败原因计数（不可变快照，给 status 用）。 */
+    private static volatile Map<AssetColorizer.Fail, Integer> lastReasons = Collections.emptyMap();
+    /** 上一轮每个失败原因的样例 id（不可变快照，给 status 用）。 */
+    private static volatile Map<AssetColorizer.Fail, List<String>> lastSamples = Collections.emptyMap();
 
     private RuntimeFallback() {
     }
@@ -39,8 +60,22 @@ public final class RuntimeFallback {
         if (lastComputed < 0) {
             return "未运行";
         }
-        return "computed=" + lastComputed + " reused=" + lastReused + " failed=" + lastFailed
+        String s = "computed=" + lastComputed + " reused=" + lastReused + " failed=" + lastFailed
                 + " elapsed=" + lastElapsedMs + "ms";
+        if (lastFailed > 0 && !lastReasons.isEmpty()) {
+            s += " 原因={" + summaryOf(lastReasons) + "}";
+        }
+        return s;
+    }
+
+    /** 上一轮的失败原因计数（只读，可能为空）。 */
+    public static Map<AssetColorizer.Fail, Integer> lastReasons() {
+        return lastReasons;
+    }
+
+    /** 上一轮每个失败原因的样例 id（只读，可能为空）。 */
+    public static Map<AssetColorizer.Fail, List<String>> lastSamples() {
+        return lastSamples;
     }
 
     /**
@@ -77,6 +112,8 @@ public final class RuntimeFallback {
         AssetColorizer colorizer = new AssetColorizer(log);
         RuntimeCache cache = RuntimeCache.load(cacheFile, log);
         Map<String, Integer> delta = new HashMap<>();
+        Map<AssetColorizer.Fail, Integer> reasons = new EnumMap<>(AssetColorizer.Fail.class);
+        Map<AssetColorizer.Fail, List<String>> samples = new EnumMap<>(AssetColorizer.Fail.class);
         int batchSize = Math.max(1, cfg.fallbackBatchSize);
         int sleepMs = Math.max(0, cfg.fallbackSleepMs);
         try {
@@ -96,6 +133,16 @@ public final class RuntimeFallback {
                         delta.put(id, c);
                     } else {
                         failed++;
+                        AssetColorizer.Fail why = colorizer.lastFail();
+                        reasons.merge(why, 1, Integer::sum);
+                        List<String> bucket = samples.get(why);
+                        if (bucket == null) {
+                            bucket = new ArrayList<>(SAMPLE_PER_REASON);
+                            samples.put(why, bucket);
+                        }
+                        if (bucket.size() < SAMPLE_PER_REASON) {
+                            bucket.add(id);
+                        }
                     }
                 }
                 if ((reused + computed + failed) % batchSize == 0) {
@@ -123,14 +170,14 @@ public final class RuntimeFallback {
             lastReused = reused;
             lastFailed = failed;
             lastElapsedMs = ms;
+            lastReasons = Collections.unmodifiableMap(new EnumMap<>(reasons));
+            lastSamples = freeze(samples);
             log.info("[ChromaAtlas/fallback] 完成：computed={} reused={} failed={} batches={} "
                             + "贴图解码成功/失败={}/{} 快照={} 耗时={}ms",
                     computed, reused, failed, batches,
                     colorizer.decodedTextures(), colorizer.failedTextures(),
                     snap.size(), ms);
-            if (failed > 0) {
-                log.info("[ChromaAtlas/fallback] 有 {} 个方块算不出色（无模型/贴图缺失/全透明）⇒ 已跳过，未写入 0", failed);
-            }
+            reportFailures(log, failed, reasons, samples);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             log.info("[ChromaAtlas/fallback] 被中断，已算的 {} 条保留", computed + reused);
@@ -140,5 +187,54 @@ public final class RuntimeFallback {
             colorizer.close();
             running = false;
         }
+    }
+
+    /**
+     * M-13：把失败集打印成人能决策的形状 —— 一行分类计数 + 每类一行样例 id。
+     *
+     * <p>★为什么保留 id 而不是只留计数★ {@code NO_MODEL_FILE} 里如果出现 OBJ / 自定义 loader
+     * 的方块，M-16（baked-quad）才有价值；只看「12 个」永远判断不了，必须看见名字。
+     */
+    private static void reportFailures(Logger log, int failed,
+                                       Map<AssetColorizer.Fail, Integer> reasons,
+                                       Map<AssetColorizer.Fail, List<String>> samples) {
+        if (failed <= 0) {
+            return;
+        }
+        log.info("[ChromaAtlas/fallback] 算不出色 {} 个，按原因：{}", failed, summaryOf(reasons));
+        for (Map.Entry<AssetColorizer.Fail, Integer> e : sortedByCount(reasons)) {
+            List<String> ids = samples.get(e.getKey());
+            log.info("[ChromaAtlas/fallback]   算不出色[{}] {} 个：{}",
+                    e.getKey(), e.getValue(), ids == null ? "-" : String.join(", ", ids));
+        }
+    }
+
+    /** {@code A=3 B=1} 形式的一行摘要，按计数从大到小。 */
+    private static String summaryOf(Map<AssetColorizer.Fail, Integer> reasons) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<AssetColorizer.Fail, Integer> e : sortedByCount(reasons)) {
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(e.getKey().name()).append('=').append(e.getValue());
+        }
+        return sb.toString();
+    }
+
+    /** EnumMap 的迭代顺序是枚举声明顺序，日志里要让「最多的原因」排第一。 */
+    private static List<Map.Entry<AssetColorizer.Fail, Integer>> sortedByCount(
+            Map<AssetColorizer.Fail, Integer> reasons) {
+        List<Map.Entry<AssetColorizer.Fail, Integer>> list = new ArrayList<>(reasons.entrySet());
+        list.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        return list;
+    }
+
+    private static Map<AssetColorizer.Fail, List<String>> freeze(
+            Map<AssetColorizer.Fail, List<String>> samples) {
+        Map<AssetColorizer.Fail, List<String>> copy = new LinkedHashMap<>();
+        for (Map.Entry<AssetColorizer.Fail, List<String>> e : samples.entrySet()) {
+            copy.put(e.getKey(), Collections.unmodifiableList(new ArrayList<>(e.getValue())));
+        }
+        return Collections.unmodifiableMap(copy);
     }
 }
