@@ -120,43 +120,23 @@ public final class AtlasFiles {
      */
     public static ColorTable loadTable(Path gameDir, Logger log) {
         ColorTable t = new ColorTable();
+        // ★R44★ 先吃 jar 内出厂表（§1.2 第 3 层）。之前只读 config，
+        // 结果发布出来的 jar 里根本没有色表 ⇒ 玩家装上去等于只开兜底。
+        int bundled = loadBundledTable(t, log);
         Path f = dir(gameDir).resolve("mapcolors.json");
         if (!Files.isRegularFile(f)) {
-            log.info("[ChromaAtlas] 未找到 {}（只用运行时兜底）", f);
+            log.info("[ChromaAtlas] 未找到 {}（只用出厂表 {} 条 + 运行时兜底）", f, bundled);
             return t;
         }
         long t0 = System.nanoTime();
         int skipped = 0;
         int badColor = 0;
         try (Reader r = Files.newBufferedReader(f, StandardCharsets.UTF_8)) {
-            JsonElement root = JsonParser.parseReader(r);
-            if (!root.isJsonObject()) {
-                return t;
-            }
-            for (Map.Entry<String, JsonElement> nsEntry : root.getAsJsonObject().entrySet()) {
-                if (!nsEntry.getValue().isJsonObject()) {
-                    continue;
-                }
-                String ns = nsEntry.getKey();
-                for (Map.Entry<String, JsonElement> e : nsEntry.getValue().getAsJsonObject().entrySet()) {
-                    int c = colorOf(e.getValue());
-                    String id = ns + ":" + e.getKey();
-                    if (VanillaMapColors.exists(c)) {
-                        t.putAuto(id, c);
-                    } else {
-                        skipped++;
-                        if (c != -1) {
-                            badColor++;   // 有值但越界（0 / 62+）：这是坏数据，不是「算不出色」
-                        }
-                    }
-                    // m=0 无论 c 是否有效都要记：它是 fill-missing-model 策略的判据
-                    if (hasModel(e.getValue()) == 0) {
-                        t.putNoModel(id);
-                    }
-                }
-            }
-            log.info("[ChromaAtlas] mapcolors.json 载入 {} 条（跳过无色 {} 条，其中色号非法 {} 条，{}ms）",
-                    t.autoView().size(), skipped, badColor, (System.nanoTime() - t0) / 1_000_000L);
+            int[] st = parseIntoT(t, JsonParser.parseReader(r));
+            skipped = st[0];
+            badColor = st[1];
+            log.info("[ChromaAtlas] mapcolors.json 载入 {} 条（出厂表 {} 条；跳过无色 {} 条，其中色号非法 {} 条，{}ms）",
+                    t.autoView().size(), bundled, skipped, badColor, (System.nanoTime() - t0) / 1_000_000L);
             if (badColor > 0) {
                 log.info("[ChromaAtlas] ★配置错误★ mapcolors.json 有 {} 条色号越界（合法范围 1..{}，0 表示无色），这些条目已被忽略",
                         badColor, VanillaMapColors.MAX_ID);
@@ -166,6 +146,57 @@ public final class AtlasFiles {
             quarantine(f, log);
         }
         return t;
+    }
+
+    /** 出厂表：jar 内 {@code /chromaatlas/mapcolors.json}，缺失时静默跳过（老版本 jar / 裁剪版）。 */
+    private static int loadBundledTable(ColorTable t, Logger log) {
+        long t0 = System.nanoTime();
+        try (java.io.InputStream in = AtlasFiles.class.getResourceAsStream("/chromaatlas/mapcolors.json")) {
+            if (in == null) {
+                log.info("[ChromaAtlas] jar 内无出厂色表（/chromaatlas/mapcolors.json），只靠 config + 兜底");
+                return 0;
+            }
+            try (Reader r = new java.io.InputStreamReader(in, StandardCharsets.UTF_8)) {
+                int[] st = parseIntoT(t, JsonParser.parseReader(r));
+                log.info("[ChromaAtlas] 出厂表载入 {} 条（跳过无色 {} 条，{}ms）",
+                        t.autoView().size(), st[0], (System.nanoTime() - t0) / 1_000_000L);
+            }
+        } catch (Exception ex) {
+            log.info("[ChromaAtlas] 出厂表解析失败：{}", ex.toString());
+        }
+        return t.autoView().size();
+    }
+
+    /** 把一段色表 json 灌进 {@code t}，返回 {@code {无色条数, 其中色号越界条数}}。config 表在后调用 ⇒ 同 id 覆盖出厂值。 */
+    private static int[] parseIntoT(ColorTable t, JsonElement root) {
+        int skipped = 0;
+        int badColor = 0;
+        if (root == null || !root.isJsonObject()) {
+            return new int[]{0, 0};
+        }
+        for (Map.Entry<String, JsonElement> nsEntry : root.getAsJsonObject().entrySet()) {
+            if (!nsEntry.getValue().isJsonObject()) {
+                continue;
+            }
+            String ns = nsEntry.getKey();
+            for (Map.Entry<String, JsonElement> e : nsEntry.getValue().getAsJsonObject().entrySet()) {
+                int c = colorOf(e.getValue());
+                String id = ns + ":" + e.getKey();
+                if (VanillaMapColors.exists(c)) {
+                    t.putAuto(id, c);
+                } else {
+                    skipped++;
+                    if (c != -1) {
+                        badColor++;   // 有值但越界（0 / 62+）：坏数据，不是「算不出色」
+                    }
+                }
+                // m=0 无论 c 是否有效都要记：它是 fill-missing-model 策略的判据
+                if (hasModel(e.getValue()) == 0) {
+                    t.putNoModel(id);
+                }
+            }
+        }
+        return new int[]{skipped, badColor};
     }
 
     /** 读手工覆盖表 {@code {"ns:id":13}}；优先级永远最高。 */
