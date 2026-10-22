@@ -4,6 +4,7 @@ import com.akira.chromaatlas.core.AtlasConfig;
 import com.akira.chromaatlas.core.ColorSnapshot;
 import com.akira.chromaatlas.core.ColorTable;
 import com.akira.chromaatlas.core.Resolver;
+import com.akira.chromaatlas.core.TransparencyIndex;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
@@ -40,6 +41,8 @@ public final class AtlasRuntime {
 
     private static volatile AtlasConfig config = new AtlasConfig();
     private static volatile ColorTable table = new ColorTable();
+    /** M-8：透明方块清单（玻璃/窗格/天窗），补色时一律跳过。 */
+    private static volatile TransparencyIndex transparency = TransparencyIndex.EMPTY;
     private static volatile Path gameDir;
     private static volatile boolean initialized;
     private static volatile String lastStrategy = "";
@@ -121,6 +124,7 @@ public final class AtlasRuntime {
         config = AtlasFiles.loadConfig(dir, log);
         table = AtlasFiles.loadTable(dir, log);
         AtlasFiles.loadOverrides(dir, table, log);
+        transparency = AtlasFiles.loadTransparency(dir, log);
         SNAPSHOT.replaceAuto(table.autoView());
 
         log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
@@ -138,9 +142,9 @@ public final class AtlasRuntime {
         AppliedColors.skippedInvalid = plan.skipInvalid;
 
         log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
-                        + "/ 注册表 {} 方块 / 基线 NONE {} / {}ms",
+                        + "/ 透明 {} / 注册表 {} 方块 / 基线 NONE {} / {}ms",
                 config.dryRun ? 0 : plan.planned.size(), plan.manual, plan.auto,
-                plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid,
+                plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid, plan.skipTransparent,
                 plan.total, plan.none, (System.nanoTime() - t0) / 1_000_000L);
 
         verify(plan, log);
@@ -169,6 +173,7 @@ public final class AtlasRuntime {
         config = AtlasFiles.loadConfig(gameDir, log);
         table = AtlasFiles.loadTable(gameDir, log);
         AtlasFiles.loadOverrides(gameDir, table, log);
+        transparency = AtlasFiles.loadTransparency(gameDir, log);
         SNAPSHOT.replaceAuto(table.autoView());
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
@@ -193,6 +198,7 @@ public final class AtlasRuntime {
         int skipNs;
         int skipNoData;
         int skipInvalid;
+        int skipTransparent;
         final Map<Block, Integer> planned = new LinkedHashMap<>();
         final List<String> candidates = new ArrayList<>();
         /** 每结果原因的样本（verbose / dump 用）。 */
@@ -247,7 +253,7 @@ public final class AtlasRuntime {
             int cur = (Integer) row[2];
             Resolver.Decision d;
             try {
-                d = Resolver.resolve(id, cur, tbl, cfg);
+                d = Resolver.resolve(id, cur, tbl, cfg, transparency);
             } catch (Throwable t) {
                 continue;
             }
@@ -266,6 +272,9 @@ public final class AtlasRuntime {
                     break;
                 case SKIP_INVALID_COLOR:
                     p.skipInvalid++;
+                    break;
+                case REFUSED_TRANSPARENT:
+                    p.skipTransparent++;
                     break;
                 default:
                     break;

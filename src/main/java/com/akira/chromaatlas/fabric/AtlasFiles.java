@@ -2,6 +2,7 @@ package com.akira.chromaatlas.fabric;
 
 import com.akira.chromaatlas.core.AtlasConfig;
 import com.akira.chromaatlas.core.ColorTable;
+import com.akira.chromaatlas.core.TransparencyIndex;
 import com.akira.chromaatlas.core.VanillaMapColors;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -63,6 +64,7 @@ public final class AtlasFiles {
             }
             cfg.runtimeFallback = bool(o, "runtimeFallback", cfg.runtimeFallback);
             cfg.mixinGetMapColor = bool(o, "mixinGetMapColor", cfg.mixinGetMapColor);
+            cfg.skipTransparent = bool(o, "skipTransparent", cfg.skipTransparent);
             cfg.verbose = bool(o, "verbose", cfg.verbose);
             cfg.fallbackBatchSize = intOf(o, "fallbackBatchSize", cfg.fallbackBatchSize);
             cfg.fallbackSleepMs = intOf(o, "fallbackSleepMs", cfg.fallbackSleepMs);
@@ -97,6 +99,7 @@ public final class AtlasFiles {
             o.addProperty("colorStrategy", "auto");
             o.addProperty("runtimeFallback", true);
             o.addProperty("mixinGetMapColor", true);
+            o.addProperty("skipTransparent", true);
             o.addProperty("verbose", false);
             o.addProperty("fallbackBatchSize", 64);
             o.addProperty("fallbackSleepMs", 20);
@@ -147,6 +150,68 @@ public final class AtlasFiles {
             quarantine(f, log);
         }
         return t;
+    }
+
+    /**
+     * M-8：读透明方块清单。两处来源，后读的覆盖前面的（同一个 Set，去重即可）：
+     * <ol>
+     *   <li>jar 内 {@code /chromaatlas/transparent_ids.json}（出厂清单，离线生成）</li>
+     *   <li>{@code config/chromaatlas/transparent.json}（玩家追加自己的；同一格式）</li>
+     * </ol>
+     * 两份都可以是 {@code {"ids":[...]}} 或裸数组。坏文件只打 info 不影响启动。
+     */
+    public static TransparencyIndex loadTransparency(Path gameDir, Logger log) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        int bundled = 0;
+        try (java.io.InputStream in = AtlasFiles.class.getResourceAsStream("/chromaatlas/transparent_ids.json")) {
+            if (in != null) {
+                try (Reader r = new java.io.InputStreamReader(in, StandardCharsets.UTF_8)) {
+                    bundled = readIdList(JsonParser.parseReader(r), ids);
+                }
+            } else {
+                log.info("[ChromaAtlas] jar 内无透明清单（/chromaatlas/transparent_ids.json）");
+            }
+        } catch (Exception ex) {
+            log.info("[ChromaAtlas] 出厂透明清单解析失败：{}", ex.toString());
+        }
+        int own = 0;
+        Path f = dir(gameDir).resolve("transparent.json");
+        if (Files.isRegularFile(f)) {
+            try (Reader r = Files.newBufferedReader(f, StandardCharsets.UTF_8)) {
+                own = readIdList(JsonParser.parseReader(r), ids);
+            } catch (Exception ex) {
+                log.info("[ChromaAtlas] transparent.json 解析失败（忽略）：{}", ex.toString());
+            }
+        }
+        if (bundled > 0 || own > 0) {
+            log.info("[ChromaAtlas] 透明方块清单：{} 条（出厂 {} / 配置 {}）⇒ 这些 id 不补色",
+                    ids.size(), bundled, own);
+        }
+        return TransparencyIndex.of(ids);
+    }
+
+    private static int readIdList(JsonElement root, java.util.Set<String> into) {
+        if (root == null) {
+            return 0;
+        }
+        JsonElement arr = root;
+        if (root.isJsonObject() && root.getAsJsonObject().has("ids")) {
+            arr = root.getAsJsonObject().get("ids");
+        }
+        if (arr == null || !arr.isJsonArray()) {
+            return 0;
+        }
+        int n = 0;
+        for (JsonElement e : arr.getAsJsonArray()) {
+            if (e != null && e.isJsonPrimitive()) {
+                String s = e.getAsString().trim();
+                if (!s.isEmpty() && !s.startsWith("#")) {
+                    into.add(s);
+                    n++;
+                }
+            }
+        }
+        return n;
     }
 
     /** 出厂表：jar 内 {@code /chromaatlas/mapcolors.json}，缺失时静默跳过（老版本 jar / 裁剪版）。 */

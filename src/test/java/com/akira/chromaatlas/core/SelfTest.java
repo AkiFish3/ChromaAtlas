@@ -29,6 +29,7 @@ public final class SelfTest {
         testDryRun();
         testColorStrategy();
         testAutomationDefaults();
+        testTransparencyFilter();
         testSnapshot();
 
         System.out.println("SELFTEST passed=" + passed + " failed=" + failed);
@@ -268,6 +269,55 @@ public final class SelfTest {
         eq("no fallback -> skip", -1, d.result);
         // 兜底是平台侧在 resolve 之前做的：resolve 只负责报告「表里没有」
         eq("no data reason stays SKIP_NO_DATA", Resolver.Reason.SKIP_NO_DATA, d.reason);
+    }
+
+
+    /** M-8：透明清单必须拦住窗/玻璃，但不能误伤普通方块；手工 overrides 仍是唯一例外。 */
+    private static void testTransparencyFilter() {
+        ColorTable t = new ColorTable();
+        t.putAuto("coc:window_arch_black", 13);
+        t.putAuto("coc:wood_planks", 13);
+        t.putAuto("coc:window_arch_black_slab", 13);
+        // 机制用例必须显式定策略（默认 auto 在未解析时是 fill-missing-model ⇒ 零写入）
+        AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";
+        TransparencyIndex idx = TransparencyIndex.of(Arrays.asList(
+                "coc:window_arch_black", "coc:window_arch_black_slab", "minecraft:glass"));
+
+        check("skipTransparent defaults on", cfg.skipTransparent);
+        eq("清单条数", 3, idx.size());
+
+        Resolver.Decision d = Resolver.resolve("coc:window_arch_black", 0, t, cfg, idx);
+        eq("window refused", -1, d.result);
+        eq("window reason", Resolver.Reason.REFUSED_TRANSPARENT, d.reason);
+        d = Resolver.resolve("coc:window_arch_black_slab", 0, t, cfg, idx);
+        eq("window slab refused too", Resolver.Reason.REFUSED_TRANSPARENT, d.reason);
+
+        d = Resolver.resolve("coc:wood_planks", 0, t, cfg, idx);
+        eq("plain block still filled", 13, d.result);
+
+        // 关掉开关 ⇒ 恢复旧行为
+        AtlasConfig off = new AtlasConfig();
+        off.colorStrategy = "fill-none";
+        off.skipTransparent = false;
+        d = Resolver.resolve("coc:window_arch_black", 0, t, off, idx);
+        eq("switch off fills window", 13, d.result);
+
+        // 手工覆盖优先于透明清单（显式指定值永远赢）
+        t.putManual("coc:window_arch_black", 26);
+        d = Resolver.resolve("coc:window_arch_black", 0, t, cfg, idx);
+        eq("manual override beats transparency", 26, d.result);
+        eq("manual reason", Resolver.Reason.OVERRIDE, d.reason);
+
+        // 空清单 = 旧行为（不能因为忘了装清单就把所有方块拒掉）
+        eq("empty index size", 0, TransparencyIndex.EMPTY.size());
+        check("empty index never skips", !TransparencyIndex.EMPTY.shouldSkip("coc:window_arch_black"));
+        ColorTable plain = new ColorTable();
+        plain.putAuto("coc:window_arch_black", 13);
+        AtlasConfig plainCfg = new AtlasConfig();
+        plainCfg.colorStrategy = "fill-none";
+        d = Resolver.resolve("coc:window_arch_black", 0, plain, plainCfg, TransparencyIndex.EMPTY);
+        eq("empty index fills", 13, d.result);
     }
 
     /** 热路径快照：语义 + 1e6 次查询耗时（M3b 验收要求 < 50ms）。 */

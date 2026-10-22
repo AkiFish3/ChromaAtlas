@@ -89,6 +89,21 @@ public final class AtlasConfig {
     /** 是否启用 mixin getMapColor 覆盖（关掉只做属性写回）。 */
     public boolean mixinGetMapColor = true;
 
+    /**
+     * M-8：是否跳过透明方块（玻璃/窗格/天窗）。
+     *
+     * <p>清单来自 jar 内 {@code /chromaatlas/transparent_ids.json}（离线生成，见
+     * {@code _m10_transparent_ids.py}）与 {@code config/chromaatlas/transparent.json}（可手改/追加）。
+     *
+     * <p>★为什么默认 true★ 原版 {@code MapColor.NONE} 在**原版地图**上的语义是「这块不画」；
+     * 我们补一个实心色上去 = 窗户被抹平（第 17 轮实测 200 个可见 FILLED 全是 {@code coc:window_*}）。
+     * 想要「FTB Chunks 上玻璃至少有个颜色（而不是纯黑）」的场景，可以显式设 {@code false}
+     * —— 那是取舍，不是默认。
+     *
+     * <p>手工 {@code overrides.json} 命中时仍然优先（显式指定值永远赢）。
+     */
+    public boolean skipTransparent = true;
+
     /** 启动时把每一条决策打到 info 日志（量大，默认关）。 */
     public boolean verbose = false;
 
