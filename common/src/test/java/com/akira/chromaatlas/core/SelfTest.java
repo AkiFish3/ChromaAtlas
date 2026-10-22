@@ -174,6 +174,17 @@ public final class SelfTest {
                 t.unknownIds(new LinkedHashSet<>(Arrays.asList("b:other"))).size());
         eq("unknownIds empty when known", 0,
                 t.unknownIds(new LinkedHashSet<>(Arrays.asList("a:x", "a:y", "a:z"))).size());
+
+        // M8：手工表与自动表的「未知 id」必须分开算 —— 自动表在开发实例里天然有一大批本实例没装的条目
+        java.util.Set<String> known = new LinkedHashSet<>(Arrays.asList("a:x"));
+        eq("unknownManualIds only manual", 1, t.unknownManualIds(known).size());
+        eq("unknownManualIds value", "a:z", t.unknownManualIds(known).get(0));
+        eq("unknownAutoCount only auto", 1, t.unknownAutoCount(known));
+        eq("invalidManualIds only manual", 1, t.invalidManualIds().size());
+        eq("invalidManualIds value has id", true, t.invalidManualIds().get(0).startsWith("a:z="));
+        eq("MAX_ID is 61", 61, VanillaMapColors.MAX_ID);
+        eq("exists(61)", true, VanillaMapColors.exists(61));
+        eq("exists(62) false", false, VanillaMapColors.exists(62));
     }
 
     private static void testDryRun() {

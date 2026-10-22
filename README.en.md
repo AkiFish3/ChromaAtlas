@@ -7,14 +7,25 @@ Minimaps (Xaero), FTB Chunks, Bluemap and vanilla maps all read `mapColor`.
 Plenty of decoration mods build blocks with `Properties.of()` without `.mapColor(...)`
 ⇒ the block stays `MapColor.NONE` ⇒ the map is a grey smear.
 
+## Branches
+
+| Branch | MC | Platform | Build |
+|--------|----|----------|-------|
+| `1.20.1-fabric` (default) | 1.20.1 | Fabric | single project, `./gradlew build` at repo root |
+| `1.21.1-fabric/neoforge` | 1.21.1 | Fabric + NeoForge | multi-project `common/`+`fabric/`+`neoforge/`, `./gradlew :fabric:build :neoforge:build` |
+| `main` | — | — | history only (tag `legacy-monorepo`) |
+
+Switch to the branch matching your target version; don't copy sources across branches —
+platform entry points and mixin targets differ.
+
 ## Info
 
 | Item | Value |
 |------|-------|
 | Mod ID | `chromaatlas` |
 | MC version | 1.20.1 / 1.21.1 |
-| Platform | Fabric (NeoForge in progress) |
-| Requires | Fabric API |
+| Platform | Fabric / NeoForge |
+| Requires | Fabric API (Fabric side); NeoForge 21.1+ (NeoForge side) |
 | License | LGPL-3.0 |
 
 ## Usage

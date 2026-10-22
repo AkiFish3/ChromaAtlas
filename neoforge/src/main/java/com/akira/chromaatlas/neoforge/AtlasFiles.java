@@ -2,6 +2,7 @@ package com.akira.chromaatlas.neoforge;
 
 import com.akira.chromaatlas.core.AtlasConfig;
 import com.akira.chromaatlas.core.ColorTable;
+import com.akira.chromaatlas.core.VanillaMapColors;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -51,7 +52,13 @@ public final class AtlasFiles {
             cfg.onlyFillNone = bool(o, "onlyFillNone", cfg.onlyFillNone);
             cfg.dryRun = bool(o, "dryRun", cfg.dryRun);
             if (o.has("colorStrategy") && o.get("colorStrategy").isJsonPrimitive()) {
-                cfg.colorStrategy = o.get("colorStrategy").getAsString();
+                String v = o.get("colorStrategy").getAsString().trim();
+                // ★M8 显式报错★ 未知策略不能静默当成 fill-none —— 玩家会以为配置生效了
+                if (!v.equals("fill-none") && !v.equals("fill-missing-model") && !v.equals("force")) {
+                    log.info("[ChromaAtlas] colorStrategy='{}' 非法（只认 fill-none / fill-missing-model / force），按 fill-none 处理", v);
+                    v = "fill-none";
+                }
+                cfg.colorStrategy = v;
             }
             cfg.runtimeFallback = bool(o, "runtimeFallback", cfg.runtimeFallback);
             cfg.mixinGetMapColor = bool(o, "mixinGetMapColor", cfg.mixinGetMapColor);
@@ -120,6 +127,7 @@ public final class AtlasFiles {
         }
         long t0 = System.nanoTime();
         int skipped = 0;
+        int badColor = 0;
         try (Reader r = Files.newBufferedReader(f, StandardCharsets.UTF_8)) {
             JsonElement root = JsonParser.parseReader(r);
             if (!root.isJsonObject()) {
@@ -133,10 +141,13 @@ public final class AtlasFiles {
                 for (Map.Entry<String, JsonElement> e : nsEntry.getValue().getAsJsonObject().entrySet()) {
                     int c = colorOf(e.getValue());
                     String id = ns + ":" + e.getKey();
-                    if (c > 0) {
+                    if (VanillaMapColors.exists(c)) {
                         t.putAuto(id, c);
                     } else {
                         skipped++;
+                        if (c != -1) {
+                            badColor++;   // 有值但越界（0 / 62+）：这是坏数据，不是「算不出色」
+                        }
                     }
                     // m=0 无论 c 是否有效都要记：它是 fill-missing-model 策略的判据
                     if (hasModel(e.getValue()) == 0) {
@@ -144,8 +155,12 @@ public final class AtlasFiles {
                     }
                 }
             }
-            log.info("[ChromaAtlas] mapcolors.json 载入 {} 条（跳过无色 {} 条，{}ms）",
-                    t.autoView().size(), skipped, (System.nanoTime() - t0) / 1_000_000L);
+            log.info("[ChromaAtlas] mapcolors.json 载入 {} 条（跳过无色 {} 条，其中色号非法 {} 条，{}ms）",
+                    t.autoView().size(), skipped, badColor, (System.nanoTime() - t0) / 1_000_000L);
+            if (badColor > 0) {
+                log.info("[ChromaAtlas] ★配置错误★ mapcolors.json 有 {} 条色号越界（合法范围 1..{}，0 表示无色），这些条目已被忽略",
+                        badColor, VanillaMapColors.MAX_ID);
+            }
         } catch (Exception ex) {
             log.info("[ChromaAtlas] mapcolors.json 解析失败：{}", ex.toString());
             quarantine(f, log);
@@ -167,14 +182,16 @@ public final class AtlasFiles {
             }
             for (Map.Entry<String, JsonElement> e : root.getAsJsonObject().entrySet()) {
                 int c = colorOf(e.getValue());
-                if (c > 0) {
+                if (VanillaMapColors.exists(c)) {
                     table.putManual(e.getKey(), c);
                 } else {
                     bad++;
-                    log.info("[ChromaAtlas] overrides.json 非法值：{}={}（必须 1..61）", e.getKey(), e.getValue());
+                    log.info("[ChromaAtlas] ★配置错误★ overrides.json 非法值：{}={}（必须是 1..{}；0 = 无色，不能手工指定）",
+                            e.getKey(), e.getValue(), VanillaMapColors.MAX_ID);
                 }
             }
-            log.info("[ChromaAtlas] overrides.json 载入 {} 条（非法 {} 条）", table.manualView().size(), bad);
+            log.info("[ChromaAtlas] overrides.json 载入 {} 条（非法 {} 条，未知 id 在注册表扫描后校验）",
+                    table.manualView().size(), bad);
         } catch (Exception ex) {
             log.info("[ChromaAtlas] overrides.json 解析失败：{}", ex.toString());
             quarantine(f, log);

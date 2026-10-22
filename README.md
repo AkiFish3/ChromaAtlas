@@ -5,14 +5,24 @@
 小地图（Xaero）、FTB Chunks、Bluemap、原版地图读的都是方块的 `mapColor`。
 很多装饰模组用 `Properties.of()` 建方块时没写 `.mapColor(...)` ⇒ 默认 `MapColor.NONE` ⇒ 地图上一片灰黑。
 
+## 分支
+
+| 分支 | MC | 平台 | 构建 |
+|------|----|------|------|
+| `1.20.1-fabric`（默认） | 1.20.1 | Fabric | 单工程，根目录 `./gradlew build` |
+| `1.21.1-fabric/neoforge` | 1.21.1 | Fabric + NeoForge | 多工程 `common/`+`fabric/`+`neoforge/`，`./gradlew :fabric:build :neoforge:build` |
+| `main` | — | — | 历史（tag `legacy-monorepo`），不再更新 |
+
+源码请按目标版本切分支，**不要跨分支拷文件**：平台入口与 mixin 目标名不同。
+
 ## 基本信息
 
 | 项目 | 内容 |
 |------|------|
 | Mod ID | `chromaatlas` |
 | MC 版本 | 1.20.1 / 1.21.1 |
-| 平台 | Fabric（NeoForge 在研） |
-| 依赖 | Fabric API |
+| 平台 | Fabric / NeoForge |
+| 依赖 | Fabric API（Fabric 侧）；NeoForge 21.1+（NeoForge 侧） |
 | 协议 | LGPL-3.0 |
 
 ## 用法

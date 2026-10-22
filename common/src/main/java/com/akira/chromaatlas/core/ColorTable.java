@@ -108,6 +108,46 @@ public final class ColorTable {
         return out;
     }
 
+    /**
+     * 只查<b>手工覆盖表</b>的未知 id —— 这是真正的人为错误（拼错 / 模组已卸载），必须显式报出来。
+     *
+     * <p>与 {@link #unknownIds} 的区别：自动表是离线产物，开发实例里必然有一大批「本实例没装」
+     * 的条目（3 万条表的实例里只装了 1 千个方块），混在一起报等于刷屏、等于没报。
+     */
+    public List<String> unknownManualIds(java.util.Collection<String> knownIds) {
+        List<String> out = new ArrayList<>();
+        for (String k : manual.keySet()) {
+            if (!knownIds.contains(k)) {
+                out.add(k);
+            }
+        }
+        Collections.sort(out);
+        return out;
+    }
+
+    /** 自动表里的未知 id 数量（表过期 / 本实例没装那个模组），只报数不报清单。 */
+    public int unknownAutoCount(java.util.Collection<String> knownIds) {
+        int n = 0;
+        for (String k : auto.keySet()) {
+            if (!knownIds.contains(k)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** 只查手工覆盖表里的非法色号（越界 / id 0）。 */
+    public List<String> invalidManualIds() {
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, Integer> e : manual.entrySet()) {
+            if (!VanillaMapColors.exists(e.getValue())) {
+                out.add(e.getKey() + "=" + e.getValue());
+            }
+        }
+        Collections.sort(out);
+        return out;
+    }
+
     /** 非法 MapColor id（0 或不存在的槽位）的条目。 */
     public List<String> invalidColorIds() {
         List<String> out = new ArrayList<>();
