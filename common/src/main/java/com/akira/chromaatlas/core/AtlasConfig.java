@@ -18,14 +18,59 @@ public final class AtlasConfig {
     public boolean dryRun = false;
 
     /**
-     * 补色策略（§1.5）：
+     * 补色策略（§1.5 / M9 重新定档）：
      * <ul>
-     *   <li>{@code fill-none}：只补当前 NONE（默认）</li>
-     *   <li>{@code fill-missing-model}：只补「NONE 且离线判定无模型/贴图」⇒ 对 Xaero 无劣化</li>
+     *   <li>{@code fill-missing-model}：<b>默认</b>。只补「NONE 且离线判定无模型/贴图」
+     *       —— 这些方块 Xaero 的贴图采样路径本来就会失败，补色是纯收益，<b>零降级</b></li>
+     *   <li>{@code fill-none}：补所有 NONE。<b>会让 Xaero 丢纹理细节</b>（它本来按贴图均值着色），
+     *       只有在「不用 Xaero / 主要用 FTB Chunks、JourneyMap」时才该开</li>
      *   <li>{@code force}：连本来有色的也覆盖（调试）</li>
      * </ul>
+     *
+     * <p>★M9 改默认值的原因★（实测同帧 + 离线 ΔE 全表审计）：
+     * Xaero 对 {@code mapColor == NONE} 走 {@code loadBlockColourFromTexture}（javap 实证），
+     * coc/minia 这类家具本来就有木纹/花纹，被改写成 61 色单色后细节全部抹平。
+     * 离线审计 coc 9554 条：ΔE 中位 ≈8，但 <b>ΔE 小 ≠ 细节没丢</b> ⇒ 阈值型「色差保护」治不了本，
+     * 唯一不降级的默认就是「只补采样必失败的那些」。
      */
-    public String colorStrategy = "fill-none";
+    public String colorStrategy = "auto";
+
+    /**
+     * {@code auto} 解析后的实际策略；{@code null} = 还没解析。
+     *
+     * <p>★M9 第 18 轮★ {@code fill-missing-model} 被证明是**结构性空操作**：
+     * 出厂表里 {@code m=0}（无模型）的条目 {@code c} 必然是 {@code -1}（无贴图 ⇒ 算不出色），
+     * 所以「只补无模型的」= 一条都补不了（bundled 表实测可写 0 条）。把默认值定成它
+     * 等于默认把 mod 关掉。故改成按运行环境自动选：
+     * <ul>
+     *   <li>装了 Xaero（minimap/worldmap）⇒ {@code fill-missing-model}（不降级，实质不动）</li>
+     *   <li>没装 Xaero ⇒ {@code fill-none}（FTB Chunks / 原版地图里 NONE 是纯黑，补色是纯收益）</li>
+     * </ul>
+     */
+    private String effectiveStrategy;
+
+    /** 实际生效的策略（{@code auto} 未解析时按最保守的 {@code fill-missing-model}）。 */
+    public String strategy() {
+        // 显式配置永远优先：reload 改了 colorStrategy 之后不能被上一次 applyAuto 的结果盖住
+        if ("auto".equals(colorStrategy)) {
+            return effectiveStrategy == null ? "fill-missing-model" : effectiveStrategy;
+        }
+        return colorStrategy;
+    }
+
+    /**
+     * 解析 {@code auto}。可重复调用（幂等）。
+     *
+     * @return 实际策略名（供日志）
+     */
+    public String applyAuto(boolean xaeroPresent) {
+        if ("auto".equals(colorStrategy)) {
+            effectiveStrategy = xaeroPresent ? "fill-missing-model" : "fill-none";
+        } else {
+            effectiveStrategy = colorStrategy;
+        }
+        return effectiveStrategy;
+    }
 
     /** 非空时 = 白名单：只处理这些命名空间。 */
     public Set<String> enabledNamespaces = new LinkedHashSet<>();
@@ -43,6 +88,21 @@ public final class AtlasConfig {
 
     /** 是否启用 mixin getMapColor 覆盖（关掉只做属性写回）。 */
     public boolean mixinGetMapColor = true;
+
+    /**
+     * M-8：是否跳过透明方块（玻璃/窗格/天窗）。
+     *
+     * <p>清单来自 jar 内 {@code /chromaatlas/transparent_ids.json}（离线生成，见
+     * {@code _m10_transparent_ids.py}）与 {@code config/chromaatlas/transparent.json}（可手改/追加）。
+     *
+     * <p>★为什么默认 true★ 原版 {@code MapColor.NONE} 在**原版地图**上的语义是「这块不画」；
+     * 我们补一个实心色上去 = 窗户被抹平（第 17 轮实测 200 个可见 FILLED 全是 {@code coc:window_*}）。
+     * 想要「FTB Chunks 上玻璃至少有个颜色（而不是纯黑）」的场景，可以显式设 {@code false}
+     * —— 那是取舍，不是默认。
+     *
+     * <p>手工 {@code overrides.json} 命中时仍然优先（显式指定值永远赢）。
+     */
+    public boolean skipTransparent = true;
 
     /** 启动时把每一条决策打到 info 日志（量大，默认关）。 */
     public boolean verbose = false;

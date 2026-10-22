@@ -4,7 +4,8 @@
 	"package": "com.akira.chromaatlas.neoforge.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"BlockStateBaseMixin"
+		"BlockStateBaseMixin",
+		"AbstractBlockDefaultMapColorMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -4,6 +4,7 @@ import com.akira.chromaatlas.core.AtlasConfig;
 import com.akira.chromaatlas.core.ColorSnapshot;
 import com.akira.chromaatlas.core.ColorTable;
 import com.akira.chromaatlas.core.Resolver;
+import com.akira.chromaatlas.core.TransparencyIndex;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
@@ -40,6 +41,8 @@ public final class AtlasRuntime {
 
     private static volatile AtlasConfig config = new AtlasConfig();
     private static volatile ColorTable table = new ColorTable();
+    /** M-8：透明方块清单（玻璃/窗格/天窗），补色时一律跳过。 */
+    private static volatile TransparencyIndex transparency = TransparencyIndex.EMPTY;
     private static volatile Path gameDir;
     private static volatile boolean initialized;
     private static volatile String lastStrategy = "";
@@ -74,6 +77,42 @@ public final class AtlasRuntime {
     }
 
     /**
+     * M9：装了 Xaero 却用 {@code fill-none}/{@code force} 时打一条显式提醒。
+     *
+     * <p>依据：Xaero 的 {@code MinimapWriter#calculateBlockColors} 在「没有原版色」时走
+     * {@code loadBlockColourFromTexture}（javap 实证）；我们一补色，它就走 {@code getMapColor}，
+     * 每块只有一色 ⇒ 木纹/花纹细节全丢。默认已改 {@code fill-missing-model}，
+     * 但旧配置文件里的 {@code fill-none} 会一直生效，所以必须提示而不是静默。
+     */
+    private static boolean xaeroPresent() {
+        try {
+            net.fabricmc.loader.api.FabricLoader fl = net.fabricmc.loader.api.FabricLoader.getInstance();
+            return fl.isModLoaded("xaerominimap") || fl.isModLoaded("xaeroworldmap");
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * ★M9 第 18 轮★ {@code auto} 策略解析 + 降级提醒。
+     *
+     * <p>为什么要有 {@code auto}：出厂表里 {@code m=0} 的条目必然 {@code c=-1}
+     * （无模型 ⇒ 无贴图 ⇒ 算不出色），所以 {@code fill-missing-model} 结构上一条都补不了。
+     * 把默认值定成它等于默认关掉 mod。改成按环境自动选：
+     * 装 Xaero ⇒ 不动（Xaero 自己按贴图着色，补色=降级）；没装 ⇒ fill-none（FTB/原版地图里 NONE 是纯黑）。
+     */
+    private static void resolveStrategy(AtlasConfig cfg, Logger log) {
+        boolean x = xaeroPresent();
+        String eff = cfg.applyAuto(x);
+        log.info("[ChromaAtlas] 策略解析：colorStrategy={} ⇒ 实际 {}（Xaero {}）",
+                cfg.colorStrategy, eff, x ? "已装" : "未装");
+        if (x && ("fill-none".equals(eff) || "force".equals(eff))) {
+            log.info("[ChromaAtlas] ★策略提醒★ 实际策略 {} 会把 Xaero 原本按贴图采样的方块改写成单色"
+                    + "（纹理细节丢失）；要无降级请改 auto 或 fill-missing-model", eff);
+        }
+    }
+
+    /**
      * 服务端 / 集成服务端启动前调用一次（幂等）。
      */
     public static synchronized void boot(Path dir, Logger log) {
@@ -85,10 +124,14 @@ public final class AtlasRuntime {
         config = AtlasFiles.loadConfig(dir, log);
         table = AtlasFiles.loadTable(dir, log);
         AtlasFiles.loadOverrides(dir, table, log);
+        transparency = AtlasFiles.loadTransparency(dir, log);
         SNAPSHOT.replaceAuto(table.autoView());
 
+        // ★顺序★ 必须先解析 auto 再打印，否则两行日志自相矛盾
+        // （第 20 轮实测：先打 `strategy=fill-missing-model`，下一行又说「实际 fill-none」）
+        resolveStrategy(config, log);
         log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
-                config.colorStrategy, config.onlyFillNone, config.dryRun, config.runtimeFallback,
+                config.strategy(), config.onlyFillNone, config.dryRun, config.runtimeFallback,
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
 
         Plan plan = scanAndPlan(table, config, log);
@@ -101,9 +144,9 @@ public final class AtlasRuntime {
         AppliedColors.skippedInvalid = plan.skipInvalid;
 
         log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
-                        + "/ 注册表 {} 方块 / 基线 NONE {} / {}ms",
+                        + "/ 透明 {} / 注册表 {} 方块 / 基线 NONE {} / {}ms",
                 config.dryRun ? 0 : plan.planned.size(), plan.manual, plan.auto,
-                plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid,
+                plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid, plan.skipTransparent,
                 plan.total, plan.none, (System.nanoTime() - t0) / 1_000_000L);
 
         verify(plan, log);
@@ -115,7 +158,7 @@ public final class AtlasRuntime {
         } else if (!config.runtimeFallback) {
             log.info("[ChromaAtlas] runtimeFallback=false ⇒ 只用静态表，未命中保持原版 NONE");
         }
-        lastStrategy = config.colorStrategy;
+        lastStrategy = config.strategy();
         initialized = true;
     }
 
@@ -132,14 +175,15 @@ public final class AtlasRuntime {
         config = AtlasFiles.loadConfig(gameDir, log);
         table = AtlasFiles.loadTable(gameDir, log);
         AtlasFiles.loadOverrides(gameDir, table, log);
+        transparency = AtlasFiles.loadTransparency(gameDir, log);
         SNAPSHOT.replaceAuto(table.autoView());
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
         verify(plan, log);
         log.info("[ChromaAtlas] reload 完成：strategy={} 写入 {} / 候选 {} / {}ms",
-                config.colorStrategy, config.dryRun ? 0 : plan.planned.size(),
+                config.strategy(), config.dryRun ? 0 : plan.planned.size(),
                 plan.candidates.size(), (System.nanoTime() - t0) / 1_000_000L);
-        lastStrategy = config.colorStrategy;
+        lastStrategy = config.strategy();
     }
 
     static String strategy() {
@@ -156,6 +200,7 @@ public final class AtlasRuntime {
         int skipNs;
         int skipNoData;
         int skipInvalid;
+        int skipTransparent;
         final Map<Block, Integer> planned = new LinkedHashMap<>();
         final List<String> candidates = new ArrayList<>();
         /** 每结果原因的样本（verbose / dump 用）。 */
@@ -210,7 +255,7 @@ public final class AtlasRuntime {
             int cur = (Integer) row[2];
             Resolver.Decision d;
             try {
-                d = Resolver.resolve(id, cur, tbl, cfg);
+                d = Resolver.resolve(id, cur, tbl, cfg, transparency);
             } catch (Throwable t) {
                 continue;
             }
@@ -229,6 +274,9 @@ public final class AtlasRuntime {
                     break;
                 case SKIP_INVALID_COLOR:
                     p.skipInvalid++;
+                    break;
+                case REFUSED_TRANSPARENT:
+                    p.skipTransparent++;
                     break;
                 default:
                     break;

@@ -5,7 +5,8 @@ package com.akira.chromaatlas.core;
  *
  * <p>优先级（写死，无配置项）：
  * <ol>
- *   <li>手工覆盖表命中 ⇒ 用它，<b>无视 onlyFillNone</b>（手工值永远优先）</li>
+ *   <li>手工覆盖表命中 ⇒ 用它，<b>无视 onlyFillNone 与透明清单</b>（手工值永远优先）</li>
+ *   <li>M-8：命中透明清单 ⇒ 不动（玻璃/窗格/天窗，原版语义 = 地图上不画）</li>
  *   <li>命名空间被禁 ⇒ 不动</li>
  *   <li>onlyFillNone 且现状非 NONE ⇒ 不动（保护本来就有色的模组，如 chipped / Arts&amp;Crafts）</li>
  *   <li>自动表命中且合法 ⇒ 用它</li>
@@ -30,7 +31,9 @@ public final class Resolver {
         /** 表里有但值非法（0 / 未使用槽位）。 */
         SKIP_INVALID_COLOR,
         /** fill-missing-model 策略下「有模型」⇒ Xaero 本来渲染得出，不补。 */
-        SKIP_HAS_MODEL
+        SKIP_HAS_MODEL,
+        /** M-8：透明方块（玻璃/窗格/天窗）—— 原版语义就是地图上不画，补了是真降级。 */
+        REFUSED_TRANSPARENT
     }
 
     public static final class Decision {
@@ -65,6 +68,11 @@ public final class Resolver {
     }
 
     public static Decision resolve(String id, int current, ColorTable table, AtlasConfig cfg) {
+        return resolve(id, current, table, cfg, TransparencyIndex.EMPTY);
+    }
+
+    public static Decision resolve(String id, int current, ColorTable table, AtlasConfig cfg,
+                                   TransparencyIndex transparent) {
         Integer man = table.manualOf(id);
         if (man != null) {
             if (VanillaMapColors.exists(man)) {
@@ -72,11 +80,16 @@ public final class Resolver {
             }
             return new Decision(id, current, -1, Reason.SKIP_INVALID_COLOR, true);
         }
+        // M-8：透明件不补（手工 overrides 是唯一例外，见上）。放在命名空间/已有色之前，
+        // 因为 force 也要拦 —— 把窗户刷成实色在任何策略下都不是「补全」。
+        if (cfg.skipTransparent && transparent != null && transparent.shouldSkip(id)) {
+            return new Decision(id, current, -1, Reason.REFUSED_TRANSPARENT, false);
+        }
         if (!cfg.namespaceAllowed(ColorTable.ns(id))) {
             return new Decision(id, current, -1, Reason.SKIP_NAMESPACE, false);
         }
         // force：连「本来就有色」的也覆盖（调试用）
-        boolean force = "force".equals(cfg.colorStrategy);
+        boolean force = "force".equals(cfg.strategy());
         if (cfg.onlyFillNone && current != 0 && !force) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_COLOR, false);
         }
@@ -85,7 +98,7 @@ public final class Resolver {
             return new Decision(id, current, -1, Reason.SKIP_NO_DATA, false);
         }
         // fill-missing-model：只补贴图路径本来就会失败的方块（不劣化 Xaero 的贴图着色，见 R12）
-        if ("fill-missing-model".equals(cfg.colorStrategy) && !table.isNoModel(id)) {
+        if ("fill-missing-model".equals(cfg.strategy()) && !table.isNoModel(id)) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_MODEL, false);
         }
         if (!VanillaMapColors.exists(aut)) {

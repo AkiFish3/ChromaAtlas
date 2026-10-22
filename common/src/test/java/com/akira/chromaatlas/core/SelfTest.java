@@ -29,6 +29,7 @@ public final class SelfTest {
         testDryRun();
         testColorStrategy();
         testAutomationDefaults();
+        testTransparencyFilter();
         testSnapshot();
 
         System.out.println("SELFTEST passed=" + passed + " failed=" + failed);
@@ -129,18 +130,21 @@ public final class SelfTest {
         t.putAuto("yuushya:a", 13);
         t.putAuto("minecraft:stone", 11);
         AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";   // 只测命名空间门，不测策略档
         cfg.disabledNamespaces.add("yuushya");
 
         eq("disabled ns skipped", -1, Resolver.resolve("yuushya:a", 0, t, cfg).result);
         eq("other ns ok", 11, Resolver.resolve("minecraft:stone", 0, t, cfg).result);
 
         AtlasConfig wl = new AtlasConfig();
+        wl.colorStrategy = "fill-none";
         wl.enabledNamespaces.add("yuushya");
         eq("whitelist allows listed", 13, Resolver.resolve("yuushya:a", 0, t, wl).result);
         eq("whitelist blocks others", -1, Resolver.resolve("minecraft:stone", 0, t, wl).result);
 
         // 黑名单优先于白名单
         AtlasConfig both = new AtlasConfig();
+        both.colorStrategy = "fill-none";
         both.enabledNamespaces.add("yuushya");
         both.disabledNamespaces.add("yuushya");
         eq("disabled wins over enabled", -1, Resolver.resolve("yuushya:a", 0, t, both).result);
@@ -150,6 +154,7 @@ public final class SelfTest {
         ColorTable t = new ColorTable();
         t.putAuto("yuushya:a", 13);
         AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";
         cfg.onlyFillNone = false;
         eq("onlyFillNone=false rewrites colored block", 13,
                 Resolver.resolve("yuushya:a", 11, t, cfg).result);
@@ -191,6 +196,7 @@ public final class SelfTest {
         ColorTable t = new ColorTable();
         t.putAuto("yuushya:a", 13);
         AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";   // dryRun 不能落在零写入档
         Resolver.Decision d = Resolver.resolve("yuushya:a", 0, t, cfg);
         check("writes when not dry", Resolver.shouldWrite(d, cfg));
         cfg.dryRun = true;
@@ -209,7 +215,17 @@ public final class SelfTest {
         t.putAuto("mod:has_model", 13);
 
         AtlasConfig cfg = new AtlasConfig();
-        eq("default strategy", "fill-none", cfg.colorStrategy);
+        // M9 改档：默认必须是「零降级」的 fill-missing-model（Xaero 会对能采样的方块自己按贴图着色）
+        // M9 第 18 轮：fill-missing-model 被证明「m=0 必然 c=-1」⇒ 结构性空操作，默认改 auto
+        eq("default strategy", "auto", cfg.colorStrategy);
+        eq("auto 未解析时保守", "fill-missing-model", cfg.strategy());
+        eq("auto + Xaero", "fill-missing-model", new AtlasConfig().applyAuto(true));
+        eq("auto 无 Xaero ⇒ fill-none", "fill-none", new AtlasConfig().applyAuto(false));
+        AtlasConfig ex = new AtlasConfig();
+        ex.colorStrategy = "fill-none";
+        eq("显式配置不被 auto 覆盖", "fill-none", ex.applyAuto(true));
+
+        cfg.colorStrategy = "fill-none";
         eq("fill-none fills", 11, Resolver.resolve("mod:no_model", 0, t, cfg).result);
         eq("fill-none fills has_model too", 13, Resolver.resolve("mod:has_model", 0, t, cfg).result);
 
@@ -253,6 +269,55 @@ public final class SelfTest {
         eq("no fallback -> skip", -1, d.result);
         // 兜底是平台侧在 resolve 之前做的：resolve 只负责报告「表里没有」
         eq("no data reason stays SKIP_NO_DATA", Resolver.Reason.SKIP_NO_DATA, d.reason);
+    }
+
+
+    /** M-8：透明清单必须拦住窗/玻璃，但不能误伤普通方块；手工 overrides 仍是唯一例外。 */
+    private static void testTransparencyFilter() {
+        ColorTable t = new ColorTable();
+        t.putAuto("coc:window_arch_black", 13);
+        t.putAuto("coc:wood_planks", 13);
+        t.putAuto("coc:window_arch_black_slab", 13);
+        // 机制用例必须显式定策略（默认 auto 在未解析时是 fill-missing-model ⇒ 零写入）
+        AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";
+        TransparencyIndex idx = TransparencyIndex.of(Arrays.asList(
+                "coc:window_arch_black", "coc:window_arch_black_slab", "minecraft:glass"));
+
+        check("skipTransparent defaults on", cfg.skipTransparent);
+        eq("清单条数", 3, idx.size());
+
+        Resolver.Decision d = Resolver.resolve("coc:window_arch_black", 0, t, cfg, idx);
+        eq("window refused", -1, d.result);
+        eq("window reason", Resolver.Reason.REFUSED_TRANSPARENT, d.reason);
+        d = Resolver.resolve("coc:window_arch_black_slab", 0, t, cfg, idx);
+        eq("window slab refused too", Resolver.Reason.REFUSED_TRANSPARENT, d.reason);
+
+        d = Resolver.resolve("coc:wood_planks", 0, t, cfg, idx);
+        eq("plain block still filled", 13, d.result);
+
+        // 关掉开关 ⇒ 恢复旧行为
+        AtlasConfig off = new AtlasConfig();
+        off.colorStrategy = "fill-none";
+        off.skipTransparent = false;
+        d = Resolver.resolve("coc:window_arch_black", 0, t, off, idx);
+        eq("switch off fills window", 13, d.result);
+
+        // 手工覆盖优先于透明清单（显式指定值永远赢）
+        t.putManual("coc:window_arch_black", 26);
+        d = Resolver.resolve("coc:window_arch_black", 0, t, cfg, idx);
+        eq("manual override beats transparency", 26, d.result);
+        eq("manual reason", Resolver.Reason.OVERRIDE, d.reason);
+
+        // 空清单 = 旧行为（不能因为忘了装清单就把所有方块拒掉）
+        eq("empty index size", 0, TransparencyIndex.EMPTY.size());
+        check("empty index never skips", !TransparencyIndex.EMPTY.shouldSkip("coc:window_arch_black"));
+        ColorTable plain = new ColorTable();
+        plain.putAuto("coc:window_arch_black", 13);
+        AtlasConfig plainCfg = new AtlasConfig();
+        plainCfg.colorStrategy = "fill-none";
+        d = Resolver.resolve("coc:window_arch_black", 0, plain, plainCfg, TransparencyIndex.EMPTY);
+        eq("empty index fills", 13, d.result);
     }
 
     /** 热路径快照：语义 + 1e6 次查询耗时（M3b 验收要求 < 50ms）。 */

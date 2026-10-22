@@ -114,7 +114,7 @@ public final class AtlasCommands {
     private static void status(CommandSourceStack s) {
         var cfg = AtlasRuntime.config();
         var tbl = AtlasRuntime.table();
-        s.sendSuccess(() -> Component.literal("[ChromaAtlas] strategy=" + cfg.colorStrategy
+        s.sendSuccess(() -> Component.literal("[ChromaAtlas] strategy=" + cfg.strategy()
                 + " dryRun=" + cfg.dryRun
                 + " onlyFillNone=" + cfg.onlyFillNone
                 + " runtimeFallback=" + cfg.runtimeFallback), false);
