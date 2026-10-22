@@ -128,13 +128,16 @@ public final class SelfTest {
     private static void testNamespaceGate() {
         ColorTable t = new ColorTable();
         t.putAuto("yuushya:a", 13);
+        t.putAuto("othermod:a", 11);
         t.putAuto("minecraft:stone", 11);
         AtlasConfig cfg = new AtlasConfig();
         cfg.colorStrategy = "fill-none";   // 只测命名空间门，不测策略档
         cfg.disabledNamespaces.add("yuushya");
 
         eq("disabled ns skipped", -1, Resolver.resolve("yuushya:a", 0, t, cfg).result);
-        eq("other ns ok", 11, Resolver.resolve("minecraft:stone", 0, t, cfg).result);
+        eq("other ns ok", 11, Resolver.resolve("othermod:a", 0, t, cfg).result);
+        // ★第 34 轮★ 原版保护默认开 ⇒ minecraft 即便不在黑名单里也不补
+        eq("原版默认可保护", -1, Resolver.resolve("minecraft:stone", 0, t, cfg).result);
 
         AtlasConfig wl = new AtlasConfig();
         wl.colorStrategy = "fill-none";
@@ -215,19 +218,29 @@ public final class SelfTest {
         t.putAuto("mod:has_model", 13);
 
         AtlasConfig cfg = new AtlasConfig();
-        // M9 改档：默认必须是「零降级」的 fill-missing-model（Xaero 会对能采样的方块自己按贴图着色）
-        // M9 第 18 轮：fill-missing-model 被证明「m=0 必然 c=-1」⇒ 结构性空操作，默认改 auto
-        eq("default strategy", "auto", cfg.colorStrategy);
-        eq("auto 未解析时保守", "fill-missing-model", cfg.strategy());
-        eq("auto + Xaero", "fill-missing-model", new AtlasConfig().applyAuto(true));
-        eq("auto 无 Xaero ⇒ fill-none", "fill-none", new AtlasConfig().applyAuto(false));
-        AtlasConfig ex = new AtlasConfig();
-        ex.colorStrategy = "fill-none";
-        eq("显式配置不被 auto 覆盖", "fill-none", ex.applyAuto(true));
+        // ★M-7 第 34 轮★ 默认 fill-none：所有地图 mod 都只能「每方块一色」，
+        // 不补的结果才是黑洞；旧配置里的 auto 也必须解析成 fill-none（否则老机器永远不干活）
+        eq("default strategy", "fill-none", cfg.colorStrategy);
+        eq("默认策略解析", "fill-none", cfg.strategy());
+        eq("auto 已废弃 ⇒ fill-none", "fill-none", new AtlasConfig().applyAuto());
+        AtlasConfig ls = new AtlasConfig();
+        ls.colorStrategy = "auto";
+        eq("auto 配置也解析成 fill-none", "fill-none", ls.applyAuto());
+        AtlasConfig fm = new AtlasConfig();
+        fm.colorStrategy = "fill-missing-model";
+        eq("fill-missing-model 仍可显式指定", "fill-missing-model", fm.applyAuto());
 
         cfg.colorStrategy = "fill-none";
         eq("fill-none fills", 11, Resolver.resolve("mod:no_model", 0, t, cfg).result);
         eq("fill-none fills has_model too", 13, Resolver.resolve("mod:has_model", 0, t, cfg).result);
+
+        // ★第 34 轮★ 原版保护：minecraft 的 NONE 是「有意留空」（火把/铁轨/花盆），补了会糊成色块
+        t.putAuto("minecraft:torch", 26);
+        AtlasConfig pv = new AtlasConfig();
+        pv.colorStrategy = "fill-none";
+        eq("原版方块不补", -1, Resolver.resolve("minecraft:torch", 0, t, pv).result);
+        pv.protectVanilla = false;
+        eq("关掉 protectVanilla 才补原版", 26, Resolver.resolve("minecraft:torch", 0, t, pv).result);
 
         cfg.colorStrategy = "fill-missing-model";
         eq("missing-model fills m=0", 11, Resolver.resolve("mod:no_model", 0, t, cfg).result);

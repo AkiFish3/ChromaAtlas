@@ -104,38 +104,20 @@ public final class AtlasRuntime {
     }
 
     /**
-     * M9：装了 Xaero 却用 {@code fill-none}/{@code force} 时打一条显式提醒。
+     * ★M-7 第 34 轮★ {@code auto} 策略解析。
      *
-     * <p>依据：Xaero 的 {@code MinimapWriter#calculateBlockColors} 在「没有原版色」时走
-     * {@code loadBlockColourFromTexture}（javap 实证）；我们一补色，它就走 {@code getMapColor}，
-     * 每块只有一色 ⇒ 木纹/花纹细节全丢。默认已改 {@code fill-missing-model}，
-     * 但旧配置文件里的 {@code fill-none} 会一直生效，所以必须提示而不是静默。
-     */
-    private static boolean xaeroPresent() {
-        try {
-            net.neoforged.fml.ModList ml = net.neoforged.fml.ModList.get();
-            return ml.isLoaded("xaerominimap") || ml.isLoaded("xaeroworldmap");
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    /**
-     * ★M9 第 18 轮★ {@code auto} 策略解析 + 降级提醒。
-     *
-     * <p>为什么要有 {@code auto}：出厂表里 {@code m=0} 的条目必然 {@code c=-1}
-     * （无模型 ⇒ 无贴图 ⇒ 算不出色），所以 {@code fill-missing-model} 结构上一条都补不了。
-     * 把默认值定成它等于默认关掉 mod。改成按环境自动选：
-     * 装 Xaero ⇒ 不动（Xaero 自己按贴图着色，补色=降级）；没装 ⇒ fill-none（FTB/原版地图里 NONE 是纯黑）。
+     * <p>旧版按「装没装 Xaero」二选一，装了就走 {@code fill-missing-model} —— 而后者是
+     * 结构性空操作（{@code m=0 ⇒ c=-1}），等于在<b>最主流的机器上默认把 mod 关掉</b>。
+     * 第 33 轮双地图实拍（同存档 / 同坐标 / 同帧）证明补色对 Xaero 是纯收益：
+     * coc 方块未补色时 Xaero 直接画黑块（整图 14.969% 纯黑），补色后降到 0.151%。
+     * 故 {@code auto} 一律 = {@code fill-none}，只作旧配置的兼容别名。
      */
     private static void resolveStrategy(AtlasConfig cfg, Logger log) {
-        boolean x = xaeroPresent();
-        String eff = cfg.applyAuto(x);
-        log.info("[ChromaAtlas] 策略解析：colorStrategy={} ⇒ 实际 {}（Xaero {}）",
-                cfg.colorStrategy, eff, x ? "已装" : "未装");
-        if (x && ("fill-none".equals(eff) || "force".equals(eff))) {
-            log.info("[ChromaAtlas] ★策略提醒★ 实际策略 {} 会把 Xaero 原本按贴图采样的方块改写成单色"
-                    + "（纹理细节丢失）；要无降级请改 auto 或 fill-missing-model", eff);
+        String eff = cfg.applyAuto();
+        log.info("[ChromaAtlas] 策略解析：colorStrategy={} ⇒ 实际 {}", cfg.colorStrategy, eff);
+        if ("fill-missing-model".equals(eff)) {
+            log.info("[ChromaAtlas] ★策略提醒★ fill-missing-model 是结构性空操作"
+                    + "（m=0 必然 c=-1 ⇒ 一条都补不了，实际写入 0 条）；想让地图有颜色请用 fill-none");
         }
     }
 
@@ -226,7 +208,7 @@ public final class AtlasRuntime {
         transparency = AtlasFiles.loadTransparency(gameDir, log);
         SNAPSHOT.replaceAuto(table.autoView());
         // ★R83 第 27 轮★ reload 必须和 boot 走同一条解析链：config 是新 new 的，
-        // effectiveStrategy 为 null ⇒ strategy() 会退回硬编码的 fill-missing-model
+        // effectiveStrategy 为 null ⇒ strategy() 会退回硬编码的 fill-none
         // （默认 colorStrategy=auto 的机器上，reload 一次就把已补的色全抹掉，日志还看不出来）。
         resolveStrategy(config, log);
         log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",

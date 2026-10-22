@@ -57,11 +57,12 @@ public final class AtlasFiles {
                 // ★M8 显式报错★ 未知策略不能静默当成 fill-none —— 玩家会以为配置生效了
                 if (!v.equals("fill-none") && !v.equals("fill-missing-model") && !v.equals("force")
                         && !v.equals("auto")) {
-                    log.info("[ChromaAtlas] colorStrategy='{}' 非法（只认 auto / fill-none / fill-missing-model / force），按 auto 处理", v);
-                    v = "auto";
+                    log.info("[ChromaAtlas] colorStrategy='{}' 非法（只认 fill-none / fill-missing-model / force / auto），按 fill-none 处理", v);
+                    v = "fill-none";
                 }
                 cfg.colorStrategy = v;
             }
+            cfg.protectVanilla = bool(o, "protectVanilla", cfg.protectVanilla);
             cfg.runtimeFallback = bool(o, "runtimeFallback", cfg.runtimeFallback);
             cfg.mixinGetMapColor = bool(o, "mixinGetMapColor", cfg.mixinGetMapColor);
             cfg.skipTransparent = bool(o, "skipTransparent", cfg.skipTransparent);
@@ -96,10 +97,11 @@ public final class AtlasFiles {
             JsonObject o = new JsonObject();
             o.addProperty("onlyFillNone", true);
             o.addProperty("dryRun", false);
-            o.addProperty("colorStrategy", "auto");
+            o.addProperty("colorStrategy", "fill-none");
             o.addProperty("runtimeFallback", true);
             o.addProperty("mixinGetMapColor", true);
             o.addProperty("skipTransparent", true);
+            o.addProperty("protectVanilla", true);
             o.addProperty("verbose", false);
             o.addProperty("fallbackBatchSize", 64);
             o.addProperty("fallbackSleepMs", 20);
