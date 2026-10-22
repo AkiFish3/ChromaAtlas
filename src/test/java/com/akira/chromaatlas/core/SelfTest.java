@@ -129,18 +129,21 @@ public final class SelfTest {
         t.putAuto("yuushya:a", 13);
         t.putAuto("minecraft:stone", 11);
         AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";   // 只测命名空间门，不测策略档
         cfg.disabledNamespaces.add("yuushya");
 
         eq("disabled ns skipped", -1, Resolver.resolve("yuushya:a", 0, t, cfg).result);
         eq("other ns ok", 11, Resolver.resolve("minecraft:stone", 0, t, cfg).result);
 
         AtlasConfig wl = new AtlasConfig();
+        wl.colorStrategy = "fill-none";
         wl.enabledNamespaces.add("yuushya");
         eq("whitelist allows listed", 13, Resolver.resolve("yuushya:a", 0, t, wl).result);
         eq("whitelist blocks others", -1, Resolver.resolve("minecraft:stone", 0, t, wl).result);
 
         // 黑名单优先于白名单
         AtlasConfig both = new AtlasConfig();
+        both.colorStrategy = "fill-none";
         both.enabledNamespaces.add("yuushya");
         both.disabledNamespaces.add("yuushya");
         eq("disabled wins over enabled", -1, Resolver.resolve("yuushya:a", 0, t, both).result);
@@ -150,6 +153,7 @@ public final class SelfTest {
         ColorTable t = new ColorTable();
         t.putAuto("yuushya:a", 13);
         AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";
         cfg.onlyFillNone = false;
         eq("onlyFillNone=false rewrites colored block", 13,
                 Resolver.resolve("yuushya:a", 11, t, cfg).result);
@@ -191,6 +195,7 @@ public final class SelfTest {
         ColorTable t = new ColorTable();
         t.putAuto("yuushya:a", 13);
         AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";   // dryRun 不能落在零写入档
         Resolver.Decision d = Resolver.resolve("yuushya:a", 0, t, cfg);
         check("writes when not dry", Resolver.shouldWrite(d, cfg));
         cfg.dryRun = true;
@@ -210,7 +215,14 @@ public final class SelfTest {
 
         AtlasConfig cfg = new AtlasConfig();
         // M9 改档：默认必须是「零降级」的 fill-missing-model（Xaero 会对能采样的方块自己按贴图着色）
-        eq("default strategy", "fill-missing-model", cfg.colorStrategy);
+        // M9 第 18 轮：fill-missing-model 被证明「m=0 必然 c=-1」⇒ 结构性空操作，默认改 auto
+        eq("default strategy", "auto", cfg.colorStrategy);
+        eq("auto 未解析时保守", "fill-missing-model", cfg.strategy());
+        eq("auto + Xaero", "fill-missing-model", new AtlasConfig().applyAuto(true));
+        eq("auto 无 Xaero ⇒ fill-none", "fill-none", new AtlasConfig().applyAuto(false));
+        AtlasConfig ex = new AtlasConfig();
+        ex.colorStrategy = "fill-none";
+        eq("显式配置不被 auto 覆盖", "fill-none", ex.applyAuto(true));
 
         cfg.colorStrategy = "fill-none";
         eq("fill-none fills", 11, Resolver.resolve("mod:no_model", 0, t, cfg).result);

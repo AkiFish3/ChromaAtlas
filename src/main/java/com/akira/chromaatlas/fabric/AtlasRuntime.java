@@ -81,18 +81,31 @@ public final class AtlasRuntime {
      * 每块只有一色 ⇒ 木纹/花纹细节全丢。默认已改 {@code fill-missing-model}，
      * 但旧配置文件里的 {@code fill-none} 会一直生效，所以必须提示而不是静默。
      */
-    private static void warnIfDegradingXaero(AtlasConfig cfg, Logger log) {
+    private static boolean xaeroPresent() {
         try {
-            if ("fill-missing-model".equals(cfg.colorStrategy)) {
-                return;
-            }
             net.fabricmc.loader.api.FabricLoader fl = net.fabricmc.loader.api.FabricLoader.getInstance();
-            if (fl.isModLoaded("xaerominimap") || fl.isModLoaded("xaeroworldmap")) {
-                log.info("[ChromaAtlas] ★策略提醒★ colorStrategy={} 会把 Xaero 原本按贴图采样的方块改写成单色"
-                        + "（纹理细节丢失）；要无降级请改 fill-missing-model", cfg.colorStrategy);
-            }
+            return fl.isModLoaded("xaerominimap") || fl.isModLoaded("xaeroworldmap");
         } catch (Throwable ignored) {
-            // 探测失败不影响补色
+            return false;
+        }
+    }
+
+    /**
+     * ★M9 第 18 轮★ {@code auto} 策略解析 + 降级提醒。
+     *
+     * <p>为什么要有 {@code auto}：出厂表里 {@code m=0} 的条目必然 {@code c=-1}
+     * （无模型 ⇒ 无贴图 ⇒ 算不出色），所以 {@code fill-missing-model} 结构上一条都补不了。
+     * 把默认值定成它等于默认关掉 mod。改成按环境自动选：
+     * 装 Xaero ⇒ 不动（Xaero 自己按贴图着色，补色=降级）；没装 ⇒ fill-none（FTB/原版地图里 NONE 是纯黑）。
+     */
+    private static void resolveStrategy(AtlasConfig cfg, Logger log) {
+        boolean x = xaeroPresent();
+        String eff = cfg.applyAuto(x);
+        log.info("[ChromaAtlas] 策略解析：colorStrategy={} ⇒ 实际 {}（Xaero {}）",
+                cfg.colorStrategy, eff, x ? "已装" : "未装");
+        if (x && ("fill-none".equals(eff) || "force".equals(eff))) {
+            log.info("[ChromaAtlas] ★策略提醒★ 实际策略 {} 会把 Xaero 原本按贴图采样的方块改写成单色"
+                    + "（纹理细节丢失）；要无降级请改 auto 或 fill-missing-model", eff);
         }
     }
 
@@ -111,9 +124,9 @@ public final class AtlasRuntime {
         SNAPSHOT.replaceAuto(table.autoView());
 
         log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
-                config.colorStrategy, config.onlyFillNone, config.dryRun, config.runtimeFallback,
+                config.strategy(), config.onlyFillNone, config.dryRun, config.runtimeFallback,
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
-        warnIfDegradingXaero(config, log);
+        resolveStrategy(config, log);
 
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
@@ -139,7 +152,7 @@ public final class AtlasRuntime {
         } else if (!config.runtimeFallback) {
             log.info("[ChromaAtlas] runtimeFallback=false ⇒ 只用静态表，未命中保持原版 NONE");
         }
-        lastStrategy = config.colorStrategy;
+        lastStrategy = config.strategy();
         initialized = true;
     }
 
@@ -161,9 +174,9 @@ public final class AtlasRuntime {
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);
         verify(plan, log);
         log.info("[ChromaAtlas] reload 完成：strategy={} 写入 {} / 候选 {} / {}ms",
-                config.colorStrategy, config.dryRun ? 0 : plan.planned.size(),
+                config.strategy(), config.dryRun ? 0 : plan.planned.size(),
                 plan.candidates.size(), (System.nanoTime() - t0) / 1_000_000L);
-        lastStrategy = config.colorStrategy;
+        lastStrategy = config.strategy();
     }
 
     static String strategy() {

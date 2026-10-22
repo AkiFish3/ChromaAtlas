@@ -54,9 +54,10 @@ public final class AtlasFiles {
             if (o.has("colorStrategy") && o.get("colorStrategy").isJsonPrimitive()) {
                 String v = o.get("colorStrategy").getAsString().trim();
                 // ★M8 显式报错★ 未知策略不能静默当成 fill-none —— 玩家会以为配置生效了
-                if (!v.equals("fill-none") && !v.equals("fill-missing-model") && !v.equals("force")) {
-                    log.info("[ChromaAtlas] colorStrategy='{}' 非法（只认 fill-none / fill-missing-model / force），按 fill-none 处理", v);
-                    v = "fill-none";
+                if (!v.equals("fill-none") && !v.equals("fill-missing-model") && !v.equals("force")
+                        && !v.equals("auto")) {
+                    log.info("[ChromaAtlas] colorStrategy='{}' 非法（只认 auto / fill-none / fill-missing-model / force），按 auto 处理", v);
+                    v = "auto";
                 }
                 cfg.colorStrategy = v;
             }
@@ -93,7 +94,7 @@ public final class AtlasFiles {
             JsonObject o = new JsonObject();
             o.addProperty("onlyFillNone", true);
             o.addProperty("dryRun", false);
-            o.addProperty("colorStrategy", "fill-missing-model");
+            o.addProperty("colorStrategy", "auto");
             o.addProperty("runtimeFallback", true);
             o.addProperty("mixinGetMapColor", true);
             o.addProperty("verbose", false);

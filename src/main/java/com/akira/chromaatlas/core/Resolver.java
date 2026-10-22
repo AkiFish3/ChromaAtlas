@@ -76,7 +76,7 @@ public final class Resolver {
             return new Decision(id, current, -1, Reason.SKIP_NAMESPACE, false);
         }
         // force：连「本来就有色」的也覆盖（调试用）
-        boolean force = "force".equals(cfg.colorStrategy);
+        boolean force = "force".equals(cfg.strategy());
         if (cfg.onlyFillNone && current != 0 && !force) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_COLOR, false);
         }
@@ -85,7 +85,7 @@ public final class Resolver {
             return new Decision(id, current, -1, Reason.SKIP_NO_DATA, false);
         }
         // fill-missing-model：只补贴图路径本来就会失败的方块（不劣化 Xaero 的贴图着色，见 R12）
-        if ("fill-missing-model".equals(cfg.colorStrategy) && !table.isNoModel(id)) {
+        if ("fill-missing-model".equals(cfg.strategy()) && !table.isNoModel(id)) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_MODEL, false);
         }
         if (!VanillaMapColors.exists(aut)) {

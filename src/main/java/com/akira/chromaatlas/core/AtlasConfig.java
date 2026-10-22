@@ -33,7 +33,44 @@ public final class AtlasConfig {
      * 离线审计 coc 9554 条：ΔE 中位 ≈8，但 <b>ΔE 小 ≠ 细节没丢</b> ⇒ 阈值型「色差保护」治不了本，
      * 唯一不降级的默认就是「只补采样必失败的那些」。
      */
-    public String colorStrategy = "fill-missing-model";
+    public String colorStrategy = "auto";
+
+    /**
+     * {@code auto} 解析后的实际策略；{@code null} = 还没解析。
+     *
+     * <p>★M9 第 18 轮★ {@code fill-missing-model} 被证明是**结构性空操作**：
+     * 出厂表里 {@code m=0}（无模型）的条目 {@code c} 必然是 {@code -1}（无贴图 ⇒ 算不出色），
+     * 所以「只补无模型的」= 一条都补不了（bundled 表实测可写 0 条）。把默认值定成它
+     * 等于默认把 mod 关掉。故改成按运行环境自动选：
+     * <ul>
+     *   <li>装了 Xaero（minimap/worldmap）⇒ {@code fill-missing-model}（不降级，实质不动）</li>
+     *   <li>没装 Xaero ⇒ {@code fill-none}（FTB Chunks / 原版地图里 NONE 是纯黑，补色是纯收益）</li>
+     * </ul>
+     */
+    private String effectiveStrategy;
+
+    /** 实际生效的策略（{@code auto} 未解析时按最保守的 {@code fill-missing-model}）。 */
+    public String strategy() {
+        // 显式配置永远优先：reload 改了 colorStrategy 之后不能被上一次 applyAuto 的结果盖住
+        if ("auto".equals(colorStrategy)) {
+            return effectiveStrategy == null ? "fill-missing-model" : effectiveStrategy;
+        }
+        return colorStrategy;
+    }
+
+    /**
+     * 解析 {@code auto}。可重复调用（幂等）。
+     *
+     * @return 实际策略名（供日志）
+     */
+    public String applyAuto(boolean xaeroPresent) {
+        if ("auto".equals(colorStrategy)) {
+            effectiveStrategy = xaeroPresent ? "fill-missing-model" : "fill-none";
+        } else {
+            effectiveStrategy = colorStrategy;
+        }
+        return effectiveStrategy;
+    }
 
     /** 非空时 = 白名单：只处理这些命名空间。 */
     public Set<String> enabledNamespaces = new LinkedHashSet<>();
