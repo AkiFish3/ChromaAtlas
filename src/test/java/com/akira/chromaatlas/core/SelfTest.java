@@ -209,7 +209,10 @@ public final class SelfTest {
         t.putAuto("mod:has_model", 13);
 
         AtlasConfig cfg = new AtlasConfig();
-        eq("default strategy", "fill-none", cfg.colorStrategy);
+        // M9 改档：默认必须是「零降级」的 fill-missing-model（Xaero 会对能采样的方块自己按贴图着色）
+        eq("default strategy", "fill-missing-model", cfg.colorStrategy);
+
+        cfg.colorStrategy = "fill-none";
         eq("fill-none fills", 11, Resolver.resolve("mod:no_model", 0, t, cfg).result);
         eq("fill-none fills has_model too", 13, Resolver.resolve("mod:has_model", 0, t, cfg).result);
 

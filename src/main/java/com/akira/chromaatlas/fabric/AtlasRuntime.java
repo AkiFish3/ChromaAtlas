@@ -74,6 +74,29 @@ public final class AtlasRuntime {
     }
 
     /**
+     * M9：装了 Xaero 却用 {@code fill-none}/{@code force} 时打一条显式提醒。
+     *
+     * <p>依据：Xaero 的 {@code MinimapWriter#calculateBlockColors} 在「没有原版色」时走
+     * {@code loadBlockColourFromTexture}（javap 实证）；我们一补色，它就走 {@code getMapColor}，
+     * 每块只有一色 ⇒ 木纹/花纹细节全丢。默认已改 {@code fill-missing-model}，
+     * 但旧配置文件里的 {@code fill-none} 会一直生效，所以必须提示而不是静默。
+     */
+    private static void warnIfDegradingXaero(AtlasConfig cfg, Logger log) {
+        try {
+            if ("fill-missing-model".equals(cfg.colorStrategy)) {
+                return;
+            }
+            net.fabricmc.loader.api.FabricLoader fl = net.fabricmc.loader.api.FabricLoader.getInstance();
+            if (fl.isModLoaded("xaerominimap") || fl.isModLoaded("xaeroworldmap")) {
+                log.info("[ChromaAtlas] ★策略提醒★ colorStrategy={} 会把 Xaero 原本按贴图采样的方块改写成单色"
+                        + "（纹理细节丢失）；要无降级请改 fill-missing-model", cfg.colorStrategy);
+            }
+        } catch (Throwable ignored) {
+            // 探测失败不影响补色
+        }
+    }
+
+    /**
      * 服务端 / 集成服务端启动前调用一次（幂等）。
      */
     public static synchronized void boot(Path dir, Logger log) {
@@ -90,6 +113,7 @@ public final class AtlasRuntime {
         log.info("[ChromaAtlas] 策略：strategy={} onlyFillNone={} dryRun={} runtimeFallback={} verbose={} 黑白名单={}/{}",
                 config.colorStrategy, config.onlyFillNone, config.dryRun, config.runtimeFallback,
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
+        warnIfDegradingXaero(config, log);
 
         Plan plan = scanAndPlan(table, config, log);
         AppliedColors.install(plan.planned, BY_ID, config.dryRun, log);

@@ -93,7 +93,7 @@ public final class AtlasFiles {
             JsonObject o = new JsonObject();
             o.addProperty("onlyFillNone", true);
             o.addProperty("dryRun", false);
-            o.addProperty("colorStrategy", "fill-none");
+            o.addProperty("colorStrategy", "fill-missing-model");
             o.addProperty("runtimeFallback", true);
             o.addProperty("mixinGetMapColor", true);
             o.addProperty("verbose", false);

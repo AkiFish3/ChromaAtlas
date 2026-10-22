@@ -18,14 +18,22 @@ public final class AtlasConfig {
     public boolean dryRun = false;
 
     /**
-     * 补色策略（§1.5）：
+     * 补色策略（§1.5 / M9 重新定档）：
      * <ul>
-     *   <li>{@code fill-none}：只补当前 NONE（默认）</li>
-     *   <li>{@code fill-missing-model}：只补「NONE 且离线判定无模型/贴图」⇒ 对 Xaero 无劣化</li>
+     *   <li>{@code fill-missing-model}：<b>默认</b>。只补「NONE 且离线判定无模型/贴图」
+     *       —— 这些方块 Xaero 的贴图采样路径本来就会失败，补色是纯收益，<b>零降级</b></li>
+     *   <li>{@code fill-none}：补所有 NONE。<b>会让 Xaero 丢纹理细节</b>（它本来按贴图均值着色），
+     *       只有在「不用 Xaero / 主要用 FTB Chunks、JourneyMap」时才该开</li>
      *   <li>{@code force}：连本来有色的也覆盖（调试）</li>
      * </ul>
+     *
+     * <p>★M9 改默认值的原因★（实测同帧 + 离线 ΔE 全表审计）：
+     * Xaero 对 {@code mapColor == NONE} 走 {@code loadBlockColourFromTexture}（javap 实证），
+     * coc/minia 这类家具本来就有木纹/花纹，被改写成 61 色单色后细节全部抹平。
+     * 离线审计 coc 9554 条：ΔE 中位 ≈8，但 <b>ΔE 小 ≠ 细节没丢</b> ⇒ 阈值型「色差保护」治不了本，
+     * 唯一不降级的默认就是「只补采样必失败的那些」。
      */
-    public String colorStrategy = "fill-none";
+    public String colorStrategy = "fill-missing-model";
 
     /** 非空时 = 白名单：只处理这些命名空间。 */
     public Set<String> enabledNamespaces = new LinkedHashSet<>();
