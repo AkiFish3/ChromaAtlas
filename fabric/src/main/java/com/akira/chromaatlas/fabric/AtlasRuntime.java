@@ -46,6 +46,17 @@ public final class AtlasRuntime {
     private static volatile Path gameDir;
     private static volatile boolean initialized;
     private static volatile String lastStrategy = "";
+    /** ★M-10 第 31 轮★ 上次扫描成功计入的方块数（0 = 扫描空转，boot 允许重试）。 */
+    private static volatile int lastTotal = -1;
+    /** ★M-10★ 上次扫描的循环体进入次数 / 单块异常次数（诊断用）。 */
+    private static volatile int lastIterated;
+    private static volatile int lastCaught;
+    /** ★M-10★ per-state {@code mapColor} 字段（懒查；null = 不可用 ⇒ 走方块级兜底）。 */
+    private static java.lang.reflect.Field STATE_MAP_COLOR;
+    private static boolean stateColorProbed;
+    /** ★M-10★ 基线取色走的路径计数（让日志能自证用的是哪一级，不靠猜）。 */
+    private static volatile int rawViaReflect;
+    private static volatile int rawViaBlock;
 
     private AtlasRuntime() {
     }
@@ -64,6 +75,21 @@ public final class AtlasRuntime {
 
     public static boolean initialized() {
         return initialized;
+    }
+
+    /** ★M-10★ 上次扫描成功计入的方块数（-1 = 还没跑过；0 = 空转，可重试）。 */
+    public static int lastScannedBlocks() {
+        return lastTotal;
+    }
+
+    /** ★M-10★ 上次扫描进入循环体的次数（= 注册表迭代长度，异常也计入）。 */
+    public static int lastIterated() {
+        return lastIterated;
+    }
+
+    /** ★M-10★ 上次扫描单块抛异常的次数。 */
+    public static int lastCaught() {
+        return lastCaught;
     }
 
     /** boot 时的原始色号；没记录过返回 -1。 */
@@ -114,13 +140,19 @@ public final class AtlasRuntime {
 
     /**
      * 服务端 / 集成服务端启动前调用一次（幂等）。
+     *
+     * <p>★M-10 第 31 轮★ 幂等条件从「跑过就锁死」收紧为「跑过<b>且扫到方块</b>」：
+     * 1.21.1 NeoForge 客户端在 {@code TagsUpdatedEvent} 上扫到 0 块（第 30 轮实机），
+     * 旧的 `if (initialized) return` 会让后续修正后的触发点再也进不来。
      */
     public static synchronized void boot(Path dir, Logger log) {
-        if (initialized) {
+        if (initialized && lastTotal > 0) {
             return;
         }
         gameDir = dir;
         long t0 = System.nanoTime();
+        rawViaReflect = 0;
+        rawViaBlock = 0;
         config = AtlasFiles.loadConfig(dir, log);
         table = AtlasFiles.loadTable(dir, log);
         AtlasFiles.loadOverrides(dir, table, log);
@@ -144,10 +176,18 @@ public final class AtlasRuntime {
         AppliedColors.skippedInvalid = plan.skipInvalid;
 
         log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
-                        + "/ 透明 {} / 注册表 {} 方块 / 基线 NONE {} / {}ms",
+                        + "/ 透明 {} / 注册表 {} 方块（遍历 {} / 抛异常 {} / 首例 {}）/ 基线 NONE {} / {}ms",
                 written, plan.manual, plan.auto,
                 plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid, plan.skipTransparent,
-                plan.total, plan.none, (System.nanoTime() - t0) / 1_000_000L);
+                plan.total, plan.iterated, plan.caught,
+                plan.firstError == null ? "无" : plan.firstError,
+                plan.none, (System.nanoTime() - t0) / 1_000_000L);
+
+        log.info("[ChromaAtlas] 基线取色路径：per-state 反射 {} 块 / 方块级兜底 {} 块（0 = 没走）",
+                rawViaReflect, rawViaBlock);
+        if (plan.firstTrace != null && !plan.firstTrace.isEmpty()) {
+            log.info("[ChromaAtlas] ★M-10 首例栈★ {}", plan.firstTrace);
+        }
 
         verify(plan, log, config.mixinGetMapColor && !config.dryRun);
 
@@ -163,6 +203,9 @@ public final class AtlasRuntime {
             log.info("[ChromaAtlas] runtimeFallback=false ⇒ 只用静态表，未命中保持原版 NONE");
         }
         lastStrategy = config.strategy();
+        lastTotal = plan.total;
+        lastIterated = plan.iterated;
+        lastCaught = plan.caught;
         initialized = true;
     }
 
@@ -195,6 +238,7 @@ public final class AtlasRuntime {
                 config.strategy(), written,
                 plan.candidates.size(), (System.nanoTime() - t0) / 1_000_000L);
         lastStrategy = config.strategy();
+        lastTotal = plan.total;
     }
 
     /**
@@ -223,6 +267,14 @@ public final class AtlasRuntime {
     /** 扫描 + 决策结果。 */
     static final class Plan {
         int total;
+        /** ★M-10★ 进入循环体的次数（含随后抛异常的）—— 与 total 不等就说明 catch 吞了东西。 */
+        int iterated;
+        /** ★M-10★ 单块 try 抛异常的次数。旧代码写在 catch 之后 ⇒ 全抛就显得「注册表 0」。 */
+        int caught;
+        /** ★M-10★ 第一个异常（id ⇒ 异常类: 消息），只为定因而留，不做重试逻辑。 */
+        String firstError;
+        /** ★M-10★ 首例异常的栈（8 帧）。 */
+        String firstTrace;
         int none;
         int manual;
         int auto;
@@ -238,6 +290,62 @@ public final class AtlasRuntime {
     }
 
     /**
+     * 读某个 state 的<b>原始</b>地图色号（0 = NONE）。
+     *
+     * <p>★M-10 第 31 轮定因★ 不能再写 {@code st.getMapColor(null, null)}：1.21.1 客户端上
+     * {@code BlockBehaviour$BlockStateBase.getMapColor} 被 <b>bountifulfares 的 mixin</b> 注入
+     * （{@code handler$dne001$bountifulfares$getMapColor}），它直接 {@code world.getBlockState(pos)}
+     * ⇒ world 传 null 必 NPE。实机证据：遍历 21413 / 抛异常 21413 / 首例 minecraft:air。
+     * 这不是「注册表空」，而是我们自己的取色方式在第三方 mixin 面前不成立。
+     *
+     * <p>所以改成两级：① 反射读 state 里那个 per-state 的 {@code MapColor} 字段
+     * （1.20.1 的 {@code getMapColor} 本身就是返回它，语义等价、且不经过任何 mixin）；
+     * ② 反射不可用时退回方块级 {@code getDefaultMapColor()}（同样不吃 world）。
+     */
+    private static int rawColor(BlockState st, Block block) {
+        java.lang.reflect.Field f = stateMapColorField();
+        if (f != null) {
+            try {
+                Object v = f.get(st);
+                if (v instanceof MapColor) {
+                    rawViaReflect++;
+                    return ((MapColor) v).id;
+                }
+            } catch (Throwable ignored) {
+                // 单个 state 读不到 ⇒ 走方块级兜底
+            }
+        }
+        rawViaBlock++;
+        MapColor c = block.getDefaultMapColor();
+        return c == null ? 0 : c.id;
+    }
+
+    /** per-state {@code mapColor} 字段（懒查一次；字段名在两个平台上都被混淆，所以按类型找）。 */
+    private static java.lang.reflect.Field stateMapColorField() {
+        if (!stateColorProbed) {
+            stateColorProbed = true;
+            try {
+                Class<?> c = BlockState.class;
+                while (c != null && c != Object.class && STATE_MAP_COLOR == null) {
+                    for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                        if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
+                                || f.getType() != MapColor.class) {
+                            continue;
+                        }
+                        f.setAccessible(true);
+                        STATE_MAP_COLOR = f;
+                        break;
+                    }
+                    c = c.getSuperclass();
+                }
+            } catch (Throwable ignored) {
+                STATE_MAP_COLOR = null;
+            }
+        }
+        return STATE_MAP_COLOR;
+    }
+
+    /**
      * 遍历注册表：建基线、跑 {@link Resolver}、挑出要写的和要兜底的。
      *
      * <p>★必须 try/catch 到单块★ 第三方模组的 {@code getMapColor} 可能读 world/pos（我们传 null），
@@ -249,14 +357,34 @@ public final class AtlasRuntime {
         Map<String, Block> byId = new HashMap<>(32768);
         List<Object[]> pending = new ArrayList<>();   // [Block, id, bootColor]
         for (Block block : Registries.BLOCK) {
+            p.iterated++;      // ★M-10★ 先计数再进 try：抛异常也必须留下痕迹
             Identifier id;
             int cur;
             try {
                 id = Registries.BLOCK.getId(block);
                 BlockState st = block.getDefaultState();
-                MapColor c = st.getMapColor(null, null);
-                cur = c == null ? 0 : c.id;
+                cur = rawColor(st, block);     // ★M-10★ 不传 null world（会被第三方 mixin 打穿）
             } catch (Throwable t) {
+                p.caught++;
+                if (p.firstError == null) {
+                    String bid;
+                    try {
+                        bid = Registries.BLOCK.getId(block).toString();
+                    } catch (Throwable ignored) {
+                        bid = String.valueOf(block);
+                    }
+                    p.firstError = bid + " ⇒ " + t.getClass().getName() + ": " + t.getMessage();
+                    // ★M-10★ 只留首例的栈（8 帧）：静默 catch 的老病理 —— 没有栈就只能猜根因
+                    StackTraceElement[] frames = t.getStackTrace();
+                    StringBuilder fr = new StringBuilder();
+                    for (int i = 0; i < Math.min(8, frames.length); i++) {
+                        if (i > 0) {
+                            fr.append(" ← ");
+                        }
+                        fr.append(frames[i]);
+                    }
+                    p.firstTrace = fr.toString();
+                }
                 continue;
             }
             p.total++;
@@ -375,31 +503,55 @@ public final class AtlasRuntime {
             return;
         }
         int sampled = 0, ok = 0, bad = 0;
+        int viaState = 0, viaBlock = 0, viaTable = 0;
         for (Map.Entry<Block, Integer> e : plan.planned.entrySet()) {
             if (sampled >= 200) {
                 break;
             }
             sampled++;
+            Block b = e.getKey();
+            BlockState st = b.getDefaultState();
+            int actual;
+            String via;
             try {
-                MapColor c = e.getKey().getDefaultState().getMapColor(null, null);
-                if (c != null && c.id == e.getValue()) {
-                    ok++;
-                } else {
-                    bad++;
-                    if (bad <= 5) {
-                        log.info("[ChromaAtlas] verify 不一致：{} 期望 {} 实际 {}",
-                                Registries.BLOCK.getId(e.getKey()),
-                                e.getValue(), c == null ? "null" : c.id);
-                    }
-                }
+                // ① 状态级：这一条才真正证明「状态级 mixin 挂上了」
+                MapColor c = st.getMapColor(null, null);
+                actual = c == null ? -1 : c.id;
+                via = "state";
             } catch (Throwable t) {
+                // ★M-10★ 1.21.1 有 mod（bountifulfares）在状态级 mixin 里直接用 world ⇒ null 必 NPE。
+                // 退到方块级（第二条 mixin）与直读表，并如实标注降级层级，不冒充同一档证据。
+                try {
+                    MapColor c = b.getDefaultMapColor();
+                    actual = c == null ? -1 : c.id;
+                    via = "block";
+                } catch (Throwable t2) {
+                    MapColor c = AppliedColors.of(st);
+                    actual = c == null ? -1 : c.id;
+                    via = "table";
+                }
+            }
+            if (actual == e.getValue()) {
+                ok++;
+                if ("state".equals(via)) {
+                    viaState++;
+                } else if ("block".equals(via)) {
+                    viaBlock++;
+                } else {
+                    viaTable++;
+                }
+            } else {
                 bad++;
+                if (bad <= 5) {
+                    log.info("[ChromaAtlas] verify 不一致：{} 期望 {} 实际 {}（经 {}）",
+                            Registries.BLOCK.getId(b), e.getValue(), actual, via);
+                }
             }
         }
         AppliedColors.verifySampled = sampled;
         AppliedColors.verifyOk = ok;
         AppliedColors.verifyMismatch = bad;
-        log.info("[ChromaAtlas] verify：sampled={} ok={} mismatch={}（mixin getMapColor 回读）",
-                sampled, ok, bad);
+        log.info("[ChromaAtlas] verify：sampled={} ok={} mismatch={}（回读层级 状态级 {} / 方块级 {} / 直读表 {}）",
+                sampled, ok, bad, viaState, viaBlock, viaTable);
     }
 }
