@@ -90,6 +90,8 @@ public final class AtlasFiles {
             }
             readSet(o, "enabledNamespaces", cfg.enabledNamespaces);
             readSet(o, "disabledNamespaces", cfg.disabledNamespaces);
+            // ★M-19★ 老配置缺键补写（只加不改）——必须放在值都读完以后，缺键这一轮仍走默认值
+            backfillConfig(f, o, log);
         } catch (Exception ex) {
             log.info("[ChromaAtlas] chromaatlas.json 解析失败，使用默认值：{}", ex.toString());
             quarantine(f, log);
@@ -97,27 +99,66 @@ public final class AtlasFiles {
         return cfg;
     }
 
+    /** 已知键 + 出厂默认值（唯一来源：默认文件与缺键补写都吃这张表）。 */
+    private static JsonObject knownDefaults() {
+        JsonObject o = new JsonObject();
+        o.addProperty("onlyFillNone", true);
+        o.addProperty("dryRun", false);
+        o.addProperty("colorStrategy", "fill-none");
+        o.addProperty("runtimeFallback", true);
+        o.addProperty("itemFallback", true);
+        o.addProperty("mixinGetMapColor", true);
+        o.addProperty("skipTransparent", true);
+        o.addProperty("protectVanilla", true);
+        o.addProperty("verbose", false);
+        o.addProperty("fallbackBatchSize", 64);
+        o.addProperty("fallbackSleepMs", 20);
+        o.addProperty("repaintPolicy", "off");
+        o.addProperty("repaintPixelsPerTick", 4096);
+        o.addProperty("repaintRadiusChunks", 8);
+        o.addProperty("runtimeCacheFile", "chromaatlas/cache.json");
+        o.add("enabledNamespaces", new com.google.gson.JsonArray());
+        o.add("disabledNamespaces", new com.google.gson.JsonArray());
+        return o;
+    }
+
+    /**
+     * ★M-19★ 老配置缺新键 ⇒ 补写回文件：<b>只加不改、保留用户值、保持原键序</b>。
+     *
+     * <p>缺键时代码本来就走默认值，<b>行为是对的</b>；问题是玩家在文件里既看不到也调不到这几个开关
+     * （第 43 轮在两台实例上都发现缺 {@code itemFallback} / {@code protectVanilla}）。
+     * 只在解析成功时调用；写不进去（只读配置目录）也不影响运行，只打一条 info。
+     */
+    static int backfillConfig(Path f, JsonObject parsed, Logger log) {
+        JsonObject defaults = knownDefaults();
+        int added = 0;
+        for (Map.Entry<String, JsonElement> e : defaults.entrySet()) {
+            if (!parsed.has(e.getKey())) {
+                parsed.add(e.getKey(), e.getValue().deepCopy());
+                added++;
+            }
+        }
+        if (added == 0) {
+            return 0;
+        }
+        try {
+            Files.createDirectories(f.getParent());
+            Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
+            try (Writer w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+                new GsonBuilder().setPrettyPrinting().create().toJson(parsed, w);
+            }
+            Files.move(tmp, f, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            log.info("[ChromaAtlas] 配置缺 {} 个新键，已补写回 {}（只加不改，已有值未动）", added, f);
+        } catch (Exception ex) {
+            log.info("[ChromaAtlas] 配置缺 {} 个新键，补写失败（用默认值，行为不受影响）：{}", added, ex.toString());
+        }
+        return added;
+    }
+
     private static void writeDefaultConfig(Path f, Logger log) {
         try {
             Files.createDirectories(f.getParent());
-            JsonObject o = new JsonObject();
-            o.addProperty("onlyFillNone", true);
-            o.addProperty("dryRun", false);
-            o.addProperty("colorStrategy", "fill-none");
-            o.addProperty("runtimeFallback", true);
-            o.addProperty("itemFallback", true);
-            o.addProperty("mixinGetMapColor", true);
-            o.addProperty("skipTransparent", true);
-            o.addProperty("protectVanilla", true);
-            o.addProperty("verbose", false);
-            o.addProperty("fallbackBatchSize", 64);
-            o.addProperty("fallbackSleepMs", 20);
-            o.addProperty("repaintPolicy", "off");
-            o.addProperty("repaintPixelsPerTick", 4096);
-            o.addProperty("repaintRadiusChunks", 8);
-            o.addProperty("runtimeCacheFile", "chromaatlas/cache.json");
-            o.add("enabledNamespaces", new com.google.gson.JsonArray());
-            o.add("disabledNamespaces", new com.google.gson.JsonArray());
+            JsonObject o = knownDefaults();
             try (Writer w = Files.newBufferedWriter(f, StandardCharsets.UTF_8)) {
                 new GsonBuilder().setPrettyPrinting().create().toJson(o, w);
             }
