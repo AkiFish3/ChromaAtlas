@@ -50,6 +50,11 @@ public final class RuntimeFallback {
     private static volatile Map<AssetColorizer.Fail, Integer> lastReasons = Collections.emptyMap();
     /** 上一轮每个失败原因的样例 id（不可变快照，给 status 用）。 */
     private static volatile Map<AssetColorizer.Fail, List<String>> lastSamples = Collections.emptyMap();
+    /** M-14：上一轮「物品模型兜底救回」的方块 id（最多 {@value #SAMPLE_PER_REASON} 个）。 */
+    private static volatile List<String> lastItemRescued = Collections.emptyList();
+    /** M-14：上一轮试过/救回次数。 */
+    private static volatile int lastItemTried = -1;
+    private static volatile int lastItemHit = -1;
 
     private RuntimeFallback() {
     }
@@ -72,7 +77,15 @@ public final class RuntimeFallback {
         if (lastFailed > 0 && !lastReasons.isEmpty()) {
             s += " 原因={" + summaryOf(lastReasons) + "}";
         }
+        if (lastItemTried >= 0) {
+            s += " item=" + lastItemHit + "/" + lastItemTried;
+        }
         return s;
+    }
+
+    /** M-14：上一轮被物品模型兜底救回的 id（只读）。 */
+    public static List<String> lastItemRescued() {
+        return lastItemRescued;
     }
 
     /** 上一轮的失败原因计数（只读，可能为空）。 */
@@ -116,7 +129,8 @@ public final class RuntimeFallback {
                             Path cacheFile, Logger log, boolean dryRun) {
         long t0 = System.nanoTime();
         int computed = 0, reused = 0, failed = 0, batches = 0;
-        AssetColorizer colorizer = new AssetColorizer(log);
+        AssetColorizer colorizer = new AssetColorizer(log, cfg.itemFallback);
+        List<String> itemRescued = new ArrayList<>();
         RuntimeCache cache = RuntimeCache.load(cacheFile, log);
         Map<String, Integer> delta = new HashMap<>();
         Map<AssetColorizer.Fail, Integer> reasons = new EnumMap<>(AssetColorizer.Fail.class);
@@ -136,6 +150,10 @@ public final class RuntimeFallback {
                     int c = colorizer.colorOf(id);
                     if (c > 0) {
                         computed++;
+                        if (colorizer.lastSource() == AssetColorizer.Source.ITEM
+                                && itemRescued.size() < SAMPLE_PER_REASON) {
+                            itemRescued.add(id);
+                        }
                         cache.put(id, c, cache.fingerprintFor(id));
                         delta.put(id, c);
                     } else {
@@ -181,12 +199,20 @@ public final class RuntimeFallback {
             lastJarHits = colorizer.jarHits();
             lastReasons = Collections.unmodifiableMap(new EnumMap<>(reasons));
             lastSamples = freeze(samples);
+            lastItemTried = colorizer.itemTried();
+            lastItemHit = colorizer.itemHit();
+            lastItemRescued = Collections.unmodifiableList(new ArrayList<>(itemRescued));
             log.info("[ChromaAtlas/fallback] 完成：computed={} reused={} failed={} batches={} "
-                            + "贴图解码成功/失败={}/{} 来源 pack/jar={}/{} 快照={} 耗时={}ms",
+                            + "贴图解码成功/失败={}/{} 来源 pack/jar={}/{} item兜底={}/{} 快照={} 耗时={}ms",
                     computed, reused, failed, batches,
                     colorizer.decodedTextures(), colorizer.failedTextures(),
                     lastPackHits, lastJarHits,
+                    lastItemHit, lastItemTried,
                     snap.size(), ms);
+            if (!itemRescued.isEmpty()) {
+                log.info("[ChromaAtlas/fallback] 物品模型兜底救回 {} 条：{}",
+                        lastItemHit, String.join(", ", itemRescued));
+            }
             reportFailures(log, failed, reasons, samples);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();

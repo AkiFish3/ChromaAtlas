@@ -133,6 +133,14 @@ public final class AtlasConfig {
      */
     public boolean runtimeFallback = true;
 
+    /**
+     * M-14：方块模型链失败时，是否退到 {@code models/item/<path>.json} 再取一次色。
+     *
+     * <p>★只按同名找，不猜改名★ 见 {@code AssetColorizer} 类注释。默认开：这一级只在
+     * 「方块链路根本没走到贴图」时触发，命中不了就原样失败，不会改变任何已有结果。
+     */
+    public boolean itemFallback = true;
+
     /** 兜底算色的结果缓存文件（相对 config 目录）。 */
     public String runtimeCacheFile = "chromaatlas/cache.json";
 

@@ -59,6 +59,15 @@ import java.util.Set;
  *       ⇒ 客户端/资源包路线（M-15）的目标，不是缺资源；</li>
  *   <li>{@code ALL_TRANSPARENT} = 贴图确实存在但全透明 ⇒ 真·无解，别浪费时间。</li>
  * </ul>
+ *
+ * <p>★M-14 物品模型兜底（第 ③ 级）★ 方块链路失败（无 blockstates / 无模型 / 模型里没有可用贴图）时，
+ * 退到 {@code assets/<ns>/models/item/<path>.json} 再走一遍 parent 链，取 {@code layer0} 等字面贴图。
+ * <b>只按同名找，绝不猜改名</b>（{@code wall_torch} → {@code torch} 这类一律不做）：猜改名会在
+ * 「item 与 block 不同物」时补上一个<b>错</b>颜色，而错色比无色更难发现（地图上看起来「已经补好了」）。
+ * 找不到就照旧失败，把原因留给 M-16（baked-quad，已关单）。
+ *
+ * <p>★为什么 item 模型能救 block★ 很多模组的方块模型只写了 {@code particle}（甚至空模型，几何由 BER 画），
+ * 但物品模型是标准 {@code item/generated} + {@code layer0} ⇒ 那条链上一定有正常贴图。
  */
 public final class AssetColorizer {
 
@@ -98,8 +107,20 @@ public final class AssetColorizer {
         TEX_DECODE_FAIL,
         /** 贴图存在但采样到的像素全是 alpha&lt;16。 */
         ALL_TRANSPARENT,
+        /** M-14：物品模型 {@code models/item/<path>.json} 不存在或解析成空。 */
+        ITEM_NO_MODEL,
         /** 链路抛异常（兜底分类，正常不该出现）。 */
         ERROR
+    }
+
+    /** M-14：最终色是沿哪条链路算出来的（日志/status 用，调试「到底谁救的」）。 */
+    public enum Source {
+        /** 没算出来。 */
+        NONE,
+        /** 方块模型链（主路径）。 */
+        BLOCK,
+        /** 物品模型兜底（M-14）。 */
+        ITEM
     }
 
     private final Logger log;
@@ -120,6 +141,16 @@ public final class AssetColorizer {
     private Fail lastFail = Fail.NONE;
     /** 贴图解码阶段的失败原因，由 {@link #meanColor} 写、由 {@link #colorOf} 转出去。 */
     private Fail meanFail = Fail.NONE;
+
+    /** M-14：上次成功走的是哪条链。 */
+    private Source lastSource = Source.NONE;
+    /** M-14：物品模型兜底自己失败的原因（主因仍报方块链路，这条只做诊断）。 */
+    private Fail lastItemFail = Fail.NONE;
+    /** M-14：试过/救回的次数（完成日志与 status 用）。 */
+    private int itemTried;
+    private int itemHit;
+    /** M-14：是否允许物品模型兜底（配置 {@code itemFallback}，默认 true）。 */
+    private boolean itemFallback = true;
 
     /**
      * 客户端资源来源（M-15）。实现只有 {@code ClientPacks} 一个，装在客户端入口里。
@@ -156,6 +187,14 @@ public final class AssetColorizer {
         this.log = log;
     }
 
+    /**
+     * @param itemFallback 是否允许物品模型兜底（M-14）；{@code false} 时行为与本轮之前逐字相同
+     */
+    public AssetColorizer(Logger log, boolean itemFallback) {
+        this.log = log;
+        this.itemFallback = itemFallback;
+    }
+
     /** 诊断计数，跑完写日志。 */
     public int decodedTextures() {
         return decoded;
@@ -180,38 +219,121 @@ public final class AssetColorizer {
         return lastFail;
     }
 
+    /** M-14：最近一次成功走的是方块链还是物品链。 */
+    public Source lastSource() {
+        return lastSource;
+    }
+
+    /** M-14：物品模型兜底自身失败的原因（未尝试时为 {@link Fail#NONE}）。 */
+    public Fail lastItemFail() {
+        return lastItemFail;
+    }
+
+    /** M-14：试过物品兜底的次数。 */
+    public int itemTried() {
+        return itemTried;
+    }
+
+    /** M-14：物品兜底救回的次数。 */
+    public int itemHit() {
+        return itemHit;
+    }
+
     /**
      * @param blockId {@code namespace:path}
      * @return 1..61；算不出返回 -1（调用方记 info 后跳过，<b>不要当 0 用</b>）
      */
     public int colorOf(String blockId) {
         lastFail = Fail.NONE;
-        String ns = ColorIds.ns(blockId);
-        String path = ColorIds.path(blockId);
+        lastSource = Source.NONE;
+        lastItemFail = Fail.NONE;
         try {
-            JsonObject bs;
-            try (InputStream in = openResource(ns, "blockstates/" + path + ".json")) {
-                if (in == null) {
-                    return fail(Fail.NO_BLOCKSTATE);
-                }
-                bs = parseJson(in);
+            int c = colorViaBlock(blockId);
+            if (c > 0) {
+                lastSource = Source.BLOCK;
+                return c;
             }
-            if (bs == null) {
-                return fail(Fail.BAD_BLOCKSTATE);
+            Fail blockFail = lastFail;
+            if (!itemFallback || !itemFallbackAllowed(blockFail)) {
+                return fail(blockFail);
             }
-            String modelId = firstModel(bs);
-            if (modelId == null) {
-                return fail(Fail.NO_MODEL);
+            itemTried++;
+            int ci = colorViaItem(blockId);
+            if (ci > 0) {
+                itemHit++;
+                lastSource = Source.ITEM;
+                lastFail = Fail.NONE;
+                return ci;
             }
-            Chain chain = followParent(modelId);
-            if (chain == null || chain.textures.isEmpty()) {
-                // 一个模型 json 都没读到 ⇒ 模型是运行时注册的；读到了却没字面贴图 ⇒ 引用链问题
-                return fail(chain != null && chain.models > 0 ? Fail.NO_TEXTURE_REF : Fail.NO_MODEL_FILE);
-            }
-            return colorOfCandidates(chain.textures);
+            // ★主因仍报方块链路★ 物品链只是兜底：它的失败（通常是「连 item 模型都没有」）
+            // 在分类统计里会把「NO_BLOCKSTATE」这类真原因淹掉，所以只留在 lastItemFail 供诊断。
+            lastItemFail = lastFail;
+            return fail(blockFail);
         } catch (Throwable t) {
             return fail(Fail.ERROR);
         }
+    }
+
+    /**
+     * M-14 的触发范围：只接「模型链压根没走到贴图」的失败。
+     *
+     * <p>{@code ALL_TRANSPARENT} / {@code TEX_DECODE_FAIL} 不接 —— 那说明方块模型确实指到了贴图
+     * （只是没颜色），换 item 模型只会把「同一眼图」再读一遍，白费 CPU。
+     */
+    private static boolean itemFallbackAllowed(Fail f) {
+        return f == Fail.NO_BLOCKSTATE || f == Fail.BAD_BLOCKSTATE || f == Fail.NO_MODEL
+                || f == Fail.NO_MODEL_FILE || f == Fail.NO_TEXTURE_REF;
+    }
+
+    /** 方块模型链（原 {@link #colorOf} 主体，M-14 拆出来复用）。 */
+    private int colorViaBlock(String blockId) throws Exception {
+        String ns = ColorIds.ns(blockId);
+        String path = ColorIds.path(blockId);
+        JsonObject bs;
+        try (InputStream in = openResource(ns, "blockstates/" + path + ".json")) {
+            if (in == null) {
+                return fail(Fail.NO_BLOCKSTATE);
+            }
+            bs = parseJson(in);
+        }
+        if (bs == null) {
+            return fail(Fail.BAD_BLOCKSTATE);
+        }
+        String modelId = firstModel(bs);
+        if (modelId == null) {
+            return fail(Fail.NO_MODEL);
+        }
+        Chain chain = followParent(modelId);
+        if (chain == null || chain.textures.isEmpty()) {
+            // 一个模型 json 都没读到 ⇒ 模型是运行时注册的；读到了却没字面贴图 ⇒ 引用链问题
+            return fail(chain != null && chain.models > 0 ? Fail.NO_TEXTURE_REF : Fail.NO_MODEL_FILE);
+        }
+        return colorOfCandidates(chain.textures);
+    }
+
+    /**
+     * M-14：物品模型链。{@code models/item/<path>.json} → parent 链 → 字面贴图。
+     *
+     * <p>★不做名字变换★ 见类注释：猜改名会补出错色，比无色更难发现。
+     */
+    private int colorViaItem(String blockId) {
+        String ns = ColorIds.ns(blockId);
+        String path = ColorIds.path(blockId);
+        try (InputStream in = openResource(ns, "models/item/" + path + ".json")) {
+            if (in == null) {
+                return fail(Fail.ITEM_NO_MODEL);
+            }
+            if (parseJson(in) == null) {
+                return fail(Fail.ITEM_NO_MODEL);
+            }
+        } catch (Exception e) {
+            return fail(Fail.ITEM_NO_MODEL);
+        }
+        Chain chain = followParent(ns + ":item/" + path);
+        if (chain == null || chain.textures.isEmpty()) {
+            return fail(chain != null && chain.models > 0 ? Fail.NO_TEXTURE_REF : Fail.ITEM_NO_MODEL);
+        }
+        return colorOfCandidates(chain.textures);
     }
 
     /**
