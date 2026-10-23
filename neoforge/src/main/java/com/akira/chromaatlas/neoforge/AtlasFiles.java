@@ -36,6 +36,11 @@ public final class AtlasFiles {
         return gameDir.resolve("config").resolve(DIR);
     }
 
+    /** M-17：学习结果的落盘位置（{@code config/chromaatlas/learned_overrides.json}）。 */
+    public static Path learnedFile(Path gameDir) {
+        return dir(gameDir).resolve(com.akira.chromaatlas.core.LearnedExport.FILE_NAME);
+    }
+
     /** 读策略；文件不存在时写一份默认值出去（这样玩家能看见有哪些开关）。 */
     public static AtlasConfig loadConfig(Path gameDir, Logger log) {
         AtlasConfig cfg = new AtlasConfig();
@@ -295,6 +300,53 @@ public final class AtlasFiles {
             log.info("[ChromaAtlas] overrides.json 解析失败：{}", ex.toString());
             quarantine(f, log);
         }
+    }
+
+    /**
+     * M-17：读学习结果 {@code learned_overrides.json}。
+     *
+     * <p>两种形态都吃：本 mod 自己导出的 {@code {"entries":{...}}}，以及裸的 {@code {"ns:id":13}}
+     * （方便人手工从导出文件里裁几条贴进 overrides.json 之前先试）。
+     * 元信息键（{@code //} / {@code from} / {@code code} / {@code count}）按
+     * {@link com.akira.chromaatlas.core.LearnedExport#isMetaKey} 跳过 —— 这些键不是方块 id，
+     * 当成 id 会打一片「配置错误」假红。
+     *
+     * @return 载入条数
+     */
+    public static int loadLearned(Path gameDir, ColorTable table, Logger log) {
+        Path f = learnedFile(gameDir);
+        if (!Files.isRegularFile(f)) {
+            return 0;
+        }
+        java.util.Map<String, Integer> entries = new java.util.LinkedHashMap<>();
+        try (Reader r = Files.newBufferedReader(f, StandardCharsets.UTF_8)) {
+            JsonElement root = JsonParser.parseReader(r);
+            if (root == null || !root.isJsonObject()) {
+                log.info("[ChromaAtlas] learned_overrides.json 不是对象，忽略：{}", f);
+                return 0;
+            }
+            JsonElement body = root;
+            if (root.getAsJsonObject().has("entries") && root.getAsJsonObject().get("entries").isJsonObject()) {
+                body = root.getAsJsonObject().get("entries");
+            }
+            for (Map.Entry<String, JsonElement> e : body.getAsJsonObject().entrySet()) {
+                String k = e.getKey() == null ? "" : e.getKey().trim();
+                if (com.akira.chromaatlas.core.LearnedExport.isMetaKey(k)) {
+                    continue;
+                }
+                entries.put(k, colorOf(e.getValue()));
+            }
+        } catch (Exception ex) {
+            log.info("[ChromaAtlas] learned_overrides.json 解析失败（忽略）：{}", ex.toString());
+            return 0;
+        }
+        int[] st = com.akira.chromaatlas.core.LearnedExport.applyTo(entries, table);
+        if (st[1] > 0) {
+            log.info("[ChromaAtlas] ★配置错误★ learned_overrides.json 有 {} 条非法（id 非 ns:path 或色号不在 1..{}）",
+                    st[1], VanillaMapColors.MAX_ID);
+        }
+        log.info("[ChromaAtlas] learned_overrides.json 载入 {} 条（{}；文件 {}）", st[0], f.getFileName(), f);
+        return st[0];
     }
 
     /** M3 的 {@code m} 字段：1=有模型，0=无模型；缺失按 1 处理（保守，不乱补）。 */

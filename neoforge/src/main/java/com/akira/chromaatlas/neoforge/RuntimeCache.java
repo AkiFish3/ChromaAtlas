@@ -102,6 +102,37 @@ public final class RuntimeCache {
         entries.put(id, new Entry(color, fingerprint));
     }
 
+    /**
+     * M-17：导出用快照 —— 返回所有 {@code c>0} 的条目（按 id 排序）。
+     *
+     * <p>★这里<b>故意</b>不按指纹过滤★ {@link #get} 必须过指纹，因为热路径上「换皮后还用旧色」
+     * 是查不出来的错。但导出不是热路径：它的两个真实用途 —— ① 同一实例内固化学习结果；
+     * ② 把 {@code cache.json} 拷到另一个实例 —— 后者跨机器后 jar 的 {@code mtime} 必然不同，
+     * 严格过滤会让「跨实例搬运」永远导出 0 条，直接把功能废掉。
+     * 所以口径改成「导全部 + 报过期条数」，由人决定要不要先重算。
+     *
+     * @param staleOut 出参：指纹已不匹配的条数（{@code staleOut[0]}），仅用于日志提醒
+     */
+    public Map<String, Integer> colorsForExport(int[] staleOut) {
+        Map<String, Integer> out = new TreeMap<>();
+        int stale = 0;
+        for (Map.Entry<String, Entry> e : entries.entrySet()) {
+            Entry v = e.getValue();
+            if (v == null || v.color <= 0) {
+                continue;
+            }
+            String cur = fingerprintOf(AssetColorizer.ColorIds.ns(e.getKey()));
+            if (!v.fingerprint.equals(cur)) {
+                stale++;
+            }
+            out.put(e.getKey(), v.color);
+        }
+        if (staleOut != null && staleOut.length > 0) {
+            staleOut[0] = stale;
+        }
+        return out;
+    }
+
     /** 当前 id 所属 jar 的指纹，供 {@link #put} 用。 */
     public String fingerprintFor(String id) {
         return fingerprintOf(AssetColorizer.ColorIds.ns(id));

@@ -139,6 +139,8 @@ public final class AtlasRuntime {
         config = AtlasFiles.loadConfig(dir, log);
         table = AtlasFiles.loadTable(dir, log);
         AtlasFiles.loadOverrides(dir, table, log);
+        // ★M-17★ 学习结果必须在手工覆盖之后装：两者都只补空位，但手工永远最高。
+        AtlasFiles.loadLearned(dir, table, log);
         transparency = AtlasFiles.loadTransparency(dir, log);
         SNAPSHOT.replaceAuto(table.autoView());
 
@@ -151,16 +153,10 @@ public final class AtlasRuntime {
 
         Plan plan = scanAndPlan(table, config, log);
         int written = installPlan(plan, config, log);
-        AppliedColors.appliedManual = plan.manual;
-        AppliedColors.appliedAuto = plan.auto;
-        AppliedColors.skippedHasColor = plan.skipHasColor;
-        AppliedColors.skippedNamespace = plan.skipNs;
-        AppliedColors.skippedNoData = plan.skipNoData;
-        AppliedColors.skippedInvalid = plan.skipInvalid;
-
-        log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
+        applyStats(plan);
+        log.info("[ChromaAtlas] 应用统计：写入 {}（手工 {} / 自动 {} / 学习 {}）/ 跳过 已有色 {} 命名空间 {} 无数据 {} 非法 {} "
                         + "/ 透明 {} / 注册表 {} 方块（遍历 {} / 抛异常 {} / 首例 {}）/ 基线 NONE {} / {}ms",
-                written, plan.manual, plan.auto,
+                written, plan.manual, plan.auto, plan.learned,
                 plan.skipHasColor, plan.skipNs, plan.skipNoData, plan.skipInvalid, plan.skipTransparent,
                 plan.total, plan.iterated, plan.caught,
                 plan.firstError == null ? "无" : plan.firstError,
@@ -205,6 +201,8 @@ public final class AtlasRuntime {
         config = AtlasFiles.loadConfig(gameDir, log);
         table = AtlasFiles.loadTable(gameDir, log);
         AtlasFiles.loadOverrides(gameDir, table, log);
+        // ★M-17★ reload 必须和 boot 走同一条装载链，否则「导出后 reload 生效」这条验收路径断掉。
+        AtlasFiles.loadLearned(gameDir, table, log);
         transparency = AtlasFiles.loadTransparency(gameDir, log);
         SNAPSHOT.replaceAuto(table.autoView());
         // ★R83 第 27 轮★ reload 必须和 boot 走同一条解析链：config 是新 new 的，
@@ -216,12 +214,30 @@ public final class AtlasRuntime {
                 config.verbose, config.enabledNamespaces.size(), config.disabledNamespaces.size());
         Plan plan = scanAndPlan(table, config, log);
         int written = installPlan(plan, config, log);
+        applyStats(plan);
         verify(plan, log, config.mixinGetMapColor && !config.dryRun);
         log.info("[ChromaAtlas] reload 完成：strategy={} 写入 {} / 候选 {} / {}ms",
                 config.strategy(), written,
                 plan.candidates.size(), (System.nanoTime() - t0) / 1_000_000L);
         lastStrategy = config.strategy();
         lastTotal = plan.total;
+    }
+
+    /**
+     * 把本轮 plan 的计数抄进 {@link AppliedColors}（{@code /chromaatlas status} 读的就是这几个字段）。
+     *
+     * <p>★M-17 修★ 以前这段只写在 {@code boot()} 里，{@code reload()} 之后 status 仍在报上一次的
+     * 「手工/自动/学习」明细 —— 总数（{@code AppliedColors.size()}）变了、分项没变，两边对不上。
+     * reload 是本 mod 最常用的运维动作（改配置后立刻看效果），统计必须同步刷新。
+     */
+    private static void applyStats(Plan plan) {
+        AppliedColors.appliedManual = plan.manual;
+        AppliedColors.appliedAuto = plan.auto;
+        AppliedColors.appliedLearned = plan.learned;
+        AppliedColors.skippedHasColor = plan.skipHasColor;
+        AppliedColors.skippedNamespace = plan.skipNs;
+        AppliedColors.skippedNoData = plan.skipNoData;
+        AppliedColors.skippedInvalid = plan.skipInvalid;
     }
 
     /**
@@ -261,6 +277,8 @@ public final class AtlasRuntime {
         int none;
         int manual;
         int auto;
+        /** ★M-17★ 命中学习结果（learned_overrides.json）的条数。 */
+        int learned;
         int skipHasColor;
         int skipNs;
         int skipNoData;
@@ -283,7 +301,7 @@ public final class AtlasRuntime {
      *
      * <p>所以改成两级：① 反射读 state 里那个 per-state 的 {@code MapColor} 字段
      * （1.20.1 的 {@code getMapColor} 本身就是返回它，语义等价、且不经过任何 mixin）；
-     * ② 反射不可用时退回方块级 {@code getDefaultMapColor()}（同样不吃 world）。
+     * ② 反射不可用时退回方块级 {@code defaultMapColor()}（同样不吃 world）。
      */
     private static int rawColor(BlockState st, Block block) {
         // ★第 32 轮★ 实现搬到 {@link RawColors}：Probe / Preflight 原先还写着
@@ -376,6 +394,9 @@ public final class AtlasRuntime {
                 case AUTO:
                     p.auto++;
                     break;
+                case LEARNED:
+                    p.learned++;
+                    break;
                 case SKIP_HAS_COLOR:
                     p.skipHasColor++;
                     break;
@@ -417,6 +438,10 @@ public final class AtlasRuntime {
         int unkAuto = tbl.unknownAutoCount(byId.keySet());
         if (unkAuto > 0) {
             log.info("[ChromaAtlas] mapcolors.json 有 {} 条属于本实例没装的方块（出厂表覆盖更多模组，正常）", unkAuto);
+        }
+        int unkLearned = tbl.unknownLearnedCount(byId.keySet());
+        if (unkLearned > 0) {
+            log.info("[ChromaAtlas] learned_overrides.json 有 {} 条属于本实例没装的方块（跨实例导出，正常）", unkLearned);
         }
 
         List<Map.Entry<String, Integer>> top = new ArrayList<>(p.byNamespaceNone.entrySet());

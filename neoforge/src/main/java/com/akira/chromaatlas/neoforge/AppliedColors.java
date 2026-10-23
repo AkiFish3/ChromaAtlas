@@ -37,6 +37,8 @@ public final class AppliedColors {
     public static volatile int applied;
     public static volatile int appliedManual;
     public static volatile int appliedAuto;
+    /** ★M-17★ 命中 learned_overrides.json 的条数（单独计数，日志才看得出导出文件真的生效了）。 */
+    public static volatile int appliedLearned;
     public static volatile int skippedHasColor;
     public static volatile int skippedNamespace;
     public static volatile int skippedNoData;
