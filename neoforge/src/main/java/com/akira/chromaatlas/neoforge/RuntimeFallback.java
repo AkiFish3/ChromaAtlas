@@ -43,6 +43,9 @@ public final class RuntimeFallback {
     private static volatile int lastReused = -1;
     private static volatile int lastFailed = -1;
     private static volatile long lastElapsedMs = -1;
+    /** M-15：上一轮命中「客户端资源包」与「mod 容器」的读取次数。 */
+    private static volatile int lastPackHits = -1;
+    private static volatile int lastJarHits = -1;
     /** 上一轮的失败原因计数（不可变快照，给 status 用）。 */
     private static volatile Map<AssetColorizer.Fail, Integer> lastReasons = Collections.emptyMap();
     /** 上一轮每个失败原因的样例 id（不可变快照，给 status 用）。 */
@@ -61,7 +64,11 @@ public final class RuntimeFallback {
             return "未运行";
         }
         String s = "computed=" + lastComputed + " reused=" + lastReused + " failed=" + lastFailed
-                + " elapsed=" + lastElapsedMs + "ms";
+                + " elapsed=" + lastElapsedMs + "ms"
+                + " source=pack:" + lastPackHits + "/jar:" + lastJarHits;
+        if (!AssetColorizer.hasPackSource()) {
+            s += "（无资源包来源：服务端 或 尚未装）";
+        }
         if (lastFailed > 0 && !lastReasons.isEmpty()) {
             s += " 原因={" + summaryOf(lastReasons) + "}";
         }
@@ -170,12 +177,15 @@ public final class RuntimeFallback {
             lastReused = reused;
             lastFailed = failed;
             lastElapsedMs = ms;
+            lastPackHits = colorizer.packHits();
+            lastJarHits = colorizer.jarHits();
             lastReasons = Collections.unmodifiableMap(new EnumMap<>(reasons));
             lastSamples = freeze(samples);
             log.info("[ChromaAtlas/fallback] 完成：computed={} reused={} failed={} batches={} "
-                            + "贴图解码成功/失败={}/{} 快照={} 耗时={}ms",
+                            + "贴图解码成功/失败={}/{} 来源 pack/jar={}/{} 快照={} 耗时={}ms",
                     computed, reused, failed, batches,
                     colorizer.decodedTextures(), colorizer.failedTextures(),
+                    lastPackHits, lastJarHits,
                     snap.size(), ms);
             reportFailures(log, failed, reasons, samples);
         } catch (InterruptedException ie) {

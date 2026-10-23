@@ -78,6 +78,9 @@ public final class ChromaAtlasNeoForgeClient {
         if (Files.isRegularFile(dir.resolve("config/chromaatlas/probe.on"))) {
             Probe.runOnce("client", ChromaAtlasNeoForge.LOG);
         }
+        // ★M-15★ 资源包来源要赶在 boot（启动兜底线程）之前装；本类是 dist=CLIENT 的 @Mod，
+        // 走到这里资源一定已 reload 完（TagsUpdatedEvent 在资源/注册表就绪之后）。
+        ClientPacks.install();
         if (AtlasRuntime.lastScannedBlocks() > 0) {
             booted = true;                // 已经成功过，别再重扫
             return;

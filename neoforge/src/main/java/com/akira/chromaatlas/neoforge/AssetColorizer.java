@@ -35,9 +35,17 @@ import java.util.Set;
  * <p>★线程模型★ 本类<b>只在单个后台线程</b>用（{@link RuntimeFallback}），内部不做同步；
  * 不要在主线程或地图渲染里 new 它。FileSystem 句柄在 {@link #close()} 统一释放。
  *
- * <p>★不读 vanilla 贴图★ 原版方块全都有 mapColor，永远轮不到兜底；而 {@code minecraft:}
- * 的资源不在 mod 容器里（客户端在 jar、服务端根本没有）。parent 走到 {@code minecraft:}
- * 只当作链路终止，不算失败。
+ * <p>★M-15 资源包优先（客户端）★ 以前只认 mod 容器（{@code FabricLoader#getModContainer}），
+ * 于是 <b>KubeJS 的 {@code kubejs/assets} 资源包完全读不到</b>（不是 mod ⇒ 容器恒空），
+ * {@code coc}/{@code minia} 这些最大的命名空间在运行时整片判 {@code NO_CONTAINER}。
+ * 现在客户端启动后由 {@code ClientPacks} 装一个 {@link PackSource}：读资源先走
+ * {@code MinecraftClient#getResourceManager()}（含原版、mod、KubeJS、用户资源包，
+ * 且尊重覆盖优先级），未命中才回退 mod 容器字节流。服务端没有 ResourceManager ⇒
+ * {@code packSource == null}，行为与 M-15 之前逐字相同。
+ *
+ * <p>★读 vanilla 贴图的分界变了★ 服务端仍然读不到 {@code minecraft:}（表里也不会有 vanilla
+ * 缺口）；客户端有了 ResourceManager 就能读到原版包，所以 {@code VANILLA_TEXTURE} 不再是
+ * 「client 也救不了」，只在<b>没有</b> ResourceManager 时出现。
  *
  * <p>★M-13 失败可诊断★ {@link #colorOf} 的 -1 以前是黑盒（只报「算不出色」）。
  * 现在每次失败都写一个 {@link Fail} 原因，调用方可以按原因分类打印 —— M-14/M-16 做不做全看这个。
@@ -102,10 +110,45 @@ public final class AssetColorizer {
     private final Map<String, Fail> texFail = new HashMap<>();
     private int decoded;
     private int decodeFail;
+    /** 命中客户端资源包的次数（M-15；服务端恒 0）。 */
+    private int packHits;
+    /** 回退 mod 容器字节流的次数。 */
+    private int jarHits;
     /** 最近一次 {@link #colorOf} 的失败原因；单线程使用，无需同步。 */
     private Fail lastFail = Fail.NONE;
     /** 贴图解码阶段的失败原因，由 {@link #meanColor} 写、由 {@link #colorOf} 转出去。 */
     private Fail meanFail = Fail.NONE;
+
+    /**
+     * 客户端资源来源（M-15）。实现只有 {@code ClientPacks} 一个，装在客户端入口里。
+     *
+     * <p>★为什么用实现注入而不是直接调用 MinecraftClient★ 服务端根本没有那个类
+     * （专用服务端 jar 里 {@code net.minecraft.client.MinecraftClient} 不存在），
+     * 直接在 {@code AssetColorizer} 里引用它会让服务端类加载就炸；而且注入方式让
+     * 三个平台（1.20.1 fabric / 1.21.1 fabric / 1.21.1 neoforge）的本类保持<b>逐字相同</b>，
+     * 移植脚本不用为它写任何规则。
+     */
+    public interface PackSource {
+        /**
+         * @param ns  命名空间
+         * @param rel 相对 {@code assets/<ns>/} 的完整路径，如 {@code textures/block/stone.png}
+         * @return 命中时返回流（<b>调用方负责 close</b>）；未命中返回 {@code null}
+         */
+        InputStream open(String ns, String rel);
+    }
+
+    /** 客户端装进来的资源包来源；服务端为 {@code null}。 */
+    private static volatile PackSource packSource;
+
+    /** 由客户端入口调用一次（多次调用幂等）。{@code null} = 卸载。 */
+    public static void installPackSource(PackSource src) {
+        packSource = src;
+    }
+
+    /** 当前是否装了客户端资源包来源（status 命令展示用）。 */
+    public static boolean hasPackSource() {
+        return packSource != null;
+    }
 
     public AssetColorizer(Logger log) {
         this.log = log;
@@ -118,6 +161,16 @@ public final class AssetColorizer {
 
     public int failedTextures() {
         return decodeFail;
+    }
+
+    /** 命中客户端资源包的次数（M-15）。服务端恒 0。 */
+    public int packHits() {
+        return packHits;
+    }
+
+    /** 回退 mod 容器字节流的次数。 */
+    public int jarHits() {
+        return jarHits;
     }
 
     /** 最近一次 {@link #colorOf} 失败的原因（成功时为 {@link Fail#NONE}）。 */
@@ -134,15 +187,13 @@ public final class AssetColorizer {
         String ns = ColorIds.ns(blockId);
         String path = ColorIds.path(blockId);
         try {
-            FileSystem fs = fsOf(ns);
-            if (fs == null) {
-                return fail(Fail.NO_CONTAINER);
+            JsonObject bs;
+            try (InputStream in = openResource(ns, "blockstates/" + path + ".json")) {
+                if (in == null) {
+                    return fail(Fail.NO_BLOCKSTATE);
+                }
+                bs = parseJson(in);
             }
-            Path bsPath = fs.getPath("/assets/" + ns + "/blockstates/" + path + ".json");
-            if (!Files.isRegularFile(bsPath)) {
-                return fail(Fail.NO_BLOCKSTATE);
-            }
-            JsonObject bs = safeJson(bsPath);
             if (bs == null) {
                 return fail(Fail.BAD_BLOCKSTATE);
             }
@@ -158,6 +209,56 @@ public final class AssetColorizer {
             return colorOfCandidates(chain.textures);
         } catch (Throwable t) {
             return fail(Fail.ERROR);
+        }
+    }
+
+    /**
+     * 读一个资源：<b>客户端资源包优先</b>，未命中再回退 mod 容器（M-15）。
+     *
+     * <p>★优先级不能反★ 用户资源包/资源包覆盖的意义就是「我改的贴图要生效」；若先读 jar，
+     * 覆盖永远被 jar 里的原件盖掉（M-15 验收的第一条正是这个）。
+     *
+     * <p>★资源包读取异常一律当未命中★ 绝不因为一次读失败就去 close 别人的 FileSystem
+     * （R24 的教训：关掉 fabric 的 zipfs ⇒ 客户端主菜单 {@code ClosedFileSystemException}）。
+     *
+     * @return 资源流（调用方 close）；两种来源都没有返回 {@code null}
+     */
+    private InputStream openResource(String ns, String rel) {
+        PackSource src = packSource;
+        if (src != null) {
+            try {
+                InputStream in = src.open(ns, rel);
+                if (in != null) {
+                    packHits++;
+                    return in;
+                }
+            } catch (Throwable ignored) {
+                // 资源 reload 期间 / pack 被关掉 ⇒ 退回 jar，不抛给上层（上层会记 ERROR 掩盖真原因）
+            }
+        }
+        try {
+            FileSystem fs = fsOf(ns);
+            if (fs == null) {
+                return null;
+            }
+            Path p = fs.getPath("/assets/" + ns + "/" + rel);
+            if (!Files.isRegularFile(p)) {
+                return null;
+            }
+            InputStream in = Files.newInputStream(p);
+            jarHits++;
+            return in;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static JsonObject parseJson(InputStream in) {
+        try {
+            JsonElement e = JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+            return e.isJsonObject() ? e.getAsJsonObject() : null;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -250,12 +351,12 @@ public final class AssetColorizer {
         return fs;
     }
 
-    private static JsonObject safeJson(Path p) {
-        try (InputStream in = Files.newInputStream(p)) {
-            JsonElement e = JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-            return e.isJsonObject() ? e.getAsJsonObject() : null;
+    /** 该命名空间有没有可读的 mod 容器（用于把「没容器」和「容器里没这张图」分开报）。 */
+    private boolean hasJar(String ns) {
+        try {
+            return fsOf(ns) != null;
         } catch (Exception e) {
-            return null;
+            return false;
         }
     }
 
@@ -324,20 +425,15 @@ public final class AssetColorizer {
             }
             String ns = ColorIds.ns(cur);
             String path = ColorIds.path(cur);
-            FileSystem fs;
-            try {
-                fs = fsOf(ns);
+            JsonObject o = null;
+            try (InputStream in = openResource(ns, "models/" + path + ".json")) {
+                if (in == null) {
+                    break; // 模型 json 不存在（或 ns 既无容器又无资源包）⇒ 链路终止
+                }
+                o = parseJson(in);
             } catch (Exception e) {
-                break;
+                break; // 读失败（reload 竞态 / pack 被关）⇒ 链路终止，交给上层记原因
             }
-            if (fs == null) {
-                break; // minecraft: / 无容器 ⇒ 链路终止
-            }
-            Path mp = fs.getPath("/assets/" + ns + "/models/" + path + ".json");
-            if (!Files.isRegularFile(mp)) {
-                break;
-            }
-            JsonObject o = safeJson(mp);
             if (o == null) {
                 break;
             }
@@ -414,27 +510,23 @@ public final class AssetColorizer {
     private int meanColor(String texId) {
         String ns = ColorIds.ns(texId);
         String path = ColorIds.path(texId);
-        if ("minecraft".equals(ns)) {
-            meanFail = Fail.VANILLA_TEXTURE;
-            return -1; // 原版资源不在这里，见类注释
-        }
-        Path png;
-        try {
-            FileSystem fs = fsOf(ns);
-            if (fs == null) {
+        InputStream raw = openResource(ns, "textures/" + path + ".png");
+        if (raw == null) {
+            // 走到这里 = 资源包和 mod 容器都没有这张图。三种环境分开报（M-13 的分类别丢）：
+            // ① minecraft: ⇒ 服务端没有 ResourceManager，原版包天然读不到
+            // ② 非 mod 命名空间（KubeJS 的 coc/minia）+ 没有 packSource ⇒ 容器恒空
+            // ③ 其余 ⇒ 容器在，就是缺这张图（上游拼错 / 资源缺失）
+            boolean jar = hasJar(ns);
+            if ("minecraft".equals(ns)) {
+                meanFail = Fail.VANILLA_TEXTURE;
+            } else if (!jar && packSource == null) {
                 meanFail = Fail.NO_CONTAINER;
-                return -1;
-            }
-            png = fs.getPath("/assets/" + ns + "/textures/" + path + ".png");
-            if (!Files.isRegularFile(png)) {
+            } else {
                 meanFail = Fail.TEX_MISSING;
-                return -1;
             }
-        } catch (Exception e) {
-            meanFail = Fail.ERROR;
             return -1;
         }
-        try (InputStream in = Files.newInputStream(png)) {
+        try (InputStream in = raw) {
             BufferedImage img = ImageIO.read(in);
             decoded++;
             if (img == null) {
