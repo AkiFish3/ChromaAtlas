@@ -10,6 +10,7 @@ package com.akira.chromaatlas.core;
  *   <li>命名空间被禁 ⇒ 不动</li>
  *   <li>onlyFillNone 且现状非 NONE ⇒ 不动（保护本来就有色的模组，如 chipped / Arts&amp;Crafts）</li>
  *   <li>自动表命中且合法 ⇒ 用它</li>
+ *   <li>M-17：学习结果（{@code learned_overrides.json}）命中且合法 ⇒ 用它（只补自动表的空位）</li>
  *   <li>否则不动</li>
  * </ol>
  *
@@ -22,6 +23,13 @@ public final class Resolver {
         OVERRIDE,
         /** 命中自动推断表。 */
         AUTO,
+        /**
+         * M-17：命中运行时学习结果（{@code learned_overrides.json}）。
+         *
+         * <p>优先级在 {@link #AUTO} 之后：出厂/离线表是审计过的、跨实例一致；学习值是单实例机器猜测，
+         * 只补「表里没有」的空位。放在 {@code SKIP_NO_DATA} 之前 —— 否则导出文件等于没用。
+         */
+        LEARNED,
         /** 已有非 NONE 色且 onlyFillNone=true。 */
         SKIP_HAS_COLOR,
         /** 命名空间被 disabledNamespaces / 不在 enabledNamespaces 里。 */
@@ -100,17 +108,28 @@ public final class Resolver {
             return new Decision(id, current, -1, Reason.SKIP_NAMESPACE, false);
         }
         Integer aut = table.autoOf(id);
-        if (aut == null) {
-            return new Decision(id, current, -1, Reason.SKIP_NO_DATA, false);
+        int value;
+        Reason reason;
+        if (aut != null) {
+            value = aut;
+            reason = Reason.AUTO;
+        } else {
+            // ★M-17★ 静态表没有 ⇒ 试学习结果（导出文件）。这一层只补空位，不动已有值。
+            Integer lr = table.learnedOf(id);
+            if (lr == null) {
+                return new Decision(id, current, -1, Reason.SKIP_NO_DATA, false);
+            }
+            value = lr;
+            reason = Reason.LEARNED;
         }
         // fill-missing-model：只处理 m=0 的条目 —— 而 m=0 必然 c=-1 ⇒ 结构上一条都补不了（第 18 轮实证）
         if ("fill-missing-model".equals(cfg.strategy()) && !table.isNoModel(id)) {
             return new Decision(id, current, -1, Reason.SKIP_HAS_MODEL, false);
         }
-        if (!VanillaMapColors.exists(aut)) {
+        if (!VanillaMapColors.exists(value)) {
             return new Decision(id, current, -1, Reason.SKIP_INVALID_COLOR, false);
         }
-        return new Decision(id, current, aut, Reason.AUTO, false);
+        return new Decision(id, current, value, reason, false);
     }
 
     /** dryRun 时是否真的写入。 */

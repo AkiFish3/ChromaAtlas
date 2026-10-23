@@ -30,6 +30,8 @@ public final class SelfTest {
         testColorStrategy();
         testAutomationDefaults();
         testTransparencyFilter();
+        testLearnedPriority();
+        testLearnedExport();
         testSnapshot();
 
         System.out.println("SELFTEST passed=" + passed + " failed=" + failed);
@@ -331,6 +333,112 @@ public final class SelfTest {
         plainCfg.colorStrategy = "fill-none";
         d = Resolver.resolve("coc:window_arch_black", 0, plain, plainCfg, TransparencyIndex.EMPTY);
         eq("empty index fills", 13, d.result);
+    }
+
+    /**
+     * M-17：learned 这一层的优先级。
+     *
+     * <p>锁三件事：① 静态表没有时 learned 能补；② 静态表有时 learned 不许抢；③ manual 永远最高。
+     * 这三条错了的表现是「导出文件放进去了但地图没变（或改了不该改的）」—— 属于静默错，必须用例锁。
+     */
+    private static void testLearnedPriority() {
+        AtlasConfig cfg = new AtlasConfig();
+        cfg.colorStrategy = "fill-none";
+
+        ColorTable t = new ColorTable();
+        t.putLearned("coc:only_learned", 43);
+        Resolver.Decision d = Resolver.resolve("coc:only_learned", 0, t, cfg);
+        eq("learned fills gap", 43, d.result);
+        eq("learned reason", Resolver.Reason.LEARNED, d.reason);
+
+        // 静态表赢：同一 id 两边都有值时不该被机器猜测改掉
+        t.putAuto("coc:both", 13);
+        t.putLearned("coc:both", 43);
+        d = Resolver.resolve("coc:both", 0, t, cfg);
+        eq("auto beats learned", 13, d.result);
+        eq("auto reason survives", Resolver.Reason.AUTO, d.reason);
+
+        // 手工赢过一切
+        t.putManual("coc:only_learned", 26);
+        d = Resolver.resolve("coc:only_learned", 0, t, cfg);
+        eq("manual beats learned", 26, d.result);
+
+        // onlyFillNone：本来有色的方块，learned 也不许动
+        ColorTable t2 = new ColorTable();
+        t2.putLearned("coc:colored", 43);
+        d = Resolver.resolve("coc:colored", 11, t2, cfg);
+        eq("learned skipped when has color", -1, d.result);
+        eq("learned skip reason", Resolver.Reason.SKIP_HAS_COLOR, d.reason);
+
+        // 透明清单照样拦 learned（学到的色不改变「窗户不该画」的语义）
+        d = Resolver.resolve("coc:colored", 0, t2, cfg,
+                TransparencyIndex.of(Arrays.asList("coc:colored")));
+        eq("transparent blocks learned too", Resolver.Reason.REFUSED_TRANSPARENT, d.reason);
+
+        // learned 值非法 ⇒ 显式报 SKIP_INVALID_COLOR，不能静默当成无色
+        ColorTable t3 = new ColorTable();
+        t3.putLearned("coc:bad", 0);
+        d = Resolver.resolve("coc:bad", 0, t3, cfg);
+        eq("invalid learned rejected", Resolver.Reason.SKIP_INVALID_COLOR, d.reason);
+
+        eq("learnedCount", 1, t3.learnedCount());
+    }
+
+    /** M-17：导出过滤 —— 每一档跳过都要有计数，不能悄悄少条目。 */
+    private static void testLearnedExport() {
+        java.util.Map<String, Integer> learned = new java.util.HashMap<>();
+        learned.put("coc:barrel", 43);          // 正常导出
+        learned.put("minia:garland_a", 5);      // 正常导出
+        learned.put("gone:removed", 7);         // 未注册
+        learned.put("coc:zero", 0);             // 无色
+        learned.put("coc:over", 62);            // 越界
+        learned.put("coc:manual", 9);           // 已手工覆盖
+        learned.put("coc:same", 13);            // 与静态表同值
+        learned.put("Bad Id", 5);               // 形态非法
+
+        java.util.Map<String, Integer> manual = new java.util.HashMap<>();
+        manual.put("coc:manual", 26);
+        java.util.Map<String, Integer> auto = new java.util.HashMap<>();
+        auto.put("coc:same", 13);
+
+        LearnedExport.Result r = LearnedExport.build(learned, id -> !id.startsWith("gone:"),
+                manual, auto, "ca-runtime-v1");
+        eq("exported", 2, r.exported);
+        eq("skippedNoColor", 2, r.skippedNoColor);
+        eq("skippedUnknown", 1, r.skippedUnknown);
+        eq("skippedManual", 1, r.skippedManual);
+        eq("skippedSame", 1, r.skippedSame);
+        eq("invalidIds", 1, r.invalidIds.size());
+        check("json has barrel", r.json.contains("\"coc:barrel\": 43"));
+        check("json has garland", r.json.contains("\"minia:garland_a\": 5"));
+        check("json excludes unknown", !r.json.contains("gone:removed"));
+        check("json excludes manual", !r.json.contains("coc:manual"));
+        check("json excludes same-value", !r.json.contains("coc:same"));
+        check("count field matches", r.json.contains("\"count\": 2,"));
+        check("meta block present", r.json.contains("\"from\": \"runtime-fallback\""));
+        check("ends with newline", r.json.endsWith("}\n"));
+
+        // 元信息键必须被识别，否则读回时会被当成非法 id
+        check("meta //", LearnedExport.isMetaKey("//"));
+        check("meta from", LearnedExport.isMetaKey("from"));
+        check("meta entries", LearnedExport.isMetaKey("entries"));
+        check("real id is not meta", !LearnedExport.isMetaKey("coc:barrel"));
+
+        // 读回：applyTo 只认合法条目
+        java.util.Map<String, Integer> raw = new java.util.HashMap<>();
+        raw.put("coc:barrel", 43);
+        raw.put("coc:zero", 0);
+        raw.put("Not An Id", 5);
+        ColorTable back = new ColorTable();
+        int[] st = LearnedExport.applyTo(raw, back);
+        eq("applyTo ok", 1, st[0]);
+        eq("applyTo bad", 2, st[1]);
+        eq("roundtrip value", 43, back.learnedOf("coc:barrel"));
+
+        // 空输入必须给出合法 JSON（不是 "entries": }）
+        LearnedExport.Result empty = LearnedExport.build(new java.util.HashMap<>(), null, null, null, "x");
+        eq("empty exported", 0, empty.exported);
+        check("empty json valid-ish", empty.json.contains("\"entries\": {}"));
     }
 
     /** 热路径快照：语义 + 1e6 次查询耗时（M3b 验收要求 < 50ms）。 */
