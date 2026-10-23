@@ -69,6 +69,7 @@ public final class AtlasFiles {
             }
             cfg.protectVanilla = bool(o, "protectVanilla", cfg.protectVanilla);
             cfg.runtimeFallback = bool(o, "runtimeFallback", cfg.runtimeFallback);
+            cfg.itemFallback = bool(o, "itemFallback", cfg.itemFallback);
             cfg.mixinGetMapColor = bool(o, "mixinGetMapColor", cfg.mixinGetMapColor);
             cfg.skipTransparent = bool(o, "skipTransparent", cfg.skipTransparent);
             cfg.verbose = bool(o, "verbose", cfg.verbose);
@@ -104,6 +105,7 @@ public final class AtlasFiles {
             o.addProperty("dryRun", false);
             o.addProperty("colorStrategy", "fill-none");
             o.addProperty("runtimeFallback", true);
+            o.addProperty("itemFallback", true);
             o.addProperty("mixinGetMapColor", true);
             o.addProperty("skipTransparent", true);
             o.addProperty("protectVanilla", true);
