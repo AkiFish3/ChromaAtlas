@@ -31,6 +31,10 @@ public final class ChromaAtlasFabricClient implements ClientModInitializer {
             if (Files.isRegularFile(dir.resolve("config/chromaatlas/probe.on"))) {
                 Probe.runOnce("client", ChromaAtlasFabric.LOG);
             }
+            // ★M-15 必须在 boot 之前★ boot 会启动兜底线程，把资源包来源装晚了那一轮就全走 jar
+            // （KubeJS 的 coc/minia 会整片 NO_CONTAINER）。CLIENT_STARTED 时资源已 reload 完，
+            // 是「ResourceManager 可用」的最早安全点。
+            ClientPacks.install();
             AtlasRuntime.boot(dir, ChromaAtlasFabric.LOG);
         });
     }
